@@ -1,0 +1,18 @@
+name: ESP-IDF C3 firmware build
+on:
+  push:
+    branches: [feature/wireless-mpg-jogging]
+  pull_request:
+jobs:
+  esp-idf-build:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.4.2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build XIAO ESP32-C3 firmware (motion disabled)
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32c3
+          idf.py build
