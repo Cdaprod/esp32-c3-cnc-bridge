@@ -9,7 +9,7 @@ Companion pendant implementation: [pendant PR #16](https://github.com/Cdaprod/lo
 - Native C receiver ownership lease with replay rejection, 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`.
 - Unrestricted v1/legacy ESP-NOW raw UART forwarding disabled.
 - New radio peers receive framed UART_RESPONSE chunks; old clients continue receiving raw responses.
-- **Motion OFF by default** via `MPG_ENABLE_MOTION=0`. Define it as 1 and provision `MPG_TRUSTED_PEER_MAC` as six comma-separated hexadecimal bytes *only after* physical commissioning, UART arbitration review and confirmation of a separate machine safety circuit.
+- **Motion OFF by default** via ESP-IDF `CONFIG_MPG_ENABLE_MOTION=n`. A commissioning engineer can use `idf.py menuconfig` → **Wireless CNC MPG receiver** to explicitly enable experimental jogging and enter the approved unicast Wi-Fi MAC (`AA:BB:CC:DD:EE:FF`). Invalid/broadcast/multicast MACs deny motion. This is *not* permission to operate before physical commissioning, UART arbitration review and an independently functioning machine safety circuit.
 
 ## Important limitations before activating physical movement
 1. ESP-NOW sender MAC allowlisting is not cryptographic authentication. Pairing by itself is insufficient. Provision keys / encrypted peers and an operator arming control for production.
