@@ -20,6 +20,79 @@
 #include "serial_handler.h"
 #include "my_logs.h"
 #include "nvs_storage.h"
+#include "mpg_motion.h"
+#include "mpg_grbl_status.h"
+
+#ifndef MPG_ENABLE_MOTION
+#define MPG_ENABLE_MOTION 0
+#endif
+/*
+ * Motion is opt-in only after physical commissioning and local peer
+ * provisioning. Do not set this using a paired or broadcast MAC.
+ */
+#if MPG_ENABLE_MOTION
+#ifndef MPG_TRUSTED_PEER_MAC
+#error "MPG_TRUSTED_PEER_MAC must be defined as six comma-separated bytes"
+#endif
+static const uint8_t mpg_trusted_peer[6] = { MPG_TRUSTED_PEER_MAC };
+#endif
+static mpg_motion_lease_t mpg_lease = {0};
+static mpg_grbl_status_t mpg_grbl = {0};
+static SemaphoreHandle_t mpg_mutex = NULL;
+static char mpg_line[128];
+static size_t mpg_line_len = 0;
+static bool mpg_line_overflow = false;
+
+static bool mpg_stop_uart(void)
+{
+    const uint8_t cancel = 0x85;
+    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1) == 1;
+}
+
+static void mpg_telemetry_ingest(const uint8_t *data, int len)
+{
+    if (!data || len <= 0 || !mpg_mutex) return;
+    xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+    for (int i = 0; i < len; ++i) {
+        const char c = (char)data[i];
+        if (c == '\n' || c == '\r') {
+            if (!mpg_line_overflow && mpg_line_len) {
+                mpg_grbl_status_parse(&mpg_grbl, mpg_line, mpg_line_len,
+                                     (uint32_t)(esp_timer_get_time() / 1000));
+            }
+            mpg_line_len = 0;
+            mpg_line_overflow = false;
+        } else if (!mpg_line_overflow) {
+            if (mpg_line_len < sizeof(mpg_line))
+                mpg_line[mpg_line_len++] = c;
+            else
+                mpg_line_overflow = true;
+        }
+    }
+    xSemaphoreGive(mpg_mutex);
+}
+
+static void mpg_watchdog_task(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(25));
+        if (!mpg_mutex) continue;
+        bool expired = false;
+        xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (mpg_motion_expired(&mpg_lease, now)) {
+            mpg_motion_revoke(&mpg_lease);
+            expired = true;
+        }
+        xSemaphoreGive(mpg_mutex);
+        if (expired) {
+            mpg_stop_uart();
+            ESP_LOGW(TAG, "MPG lease expired: GRBL jog cancel sent");
+        }
+    }
+}
+
 
 static const char *TAG = "ESPNOW";
 
@@ -601,12 +674,46 @@ static void espnow_rx_task(void *pvParameters)
             break;
 
         case ESPNOW_MSG_MPG_JOG: {
-            /*
-             * Protocol dispatch exists, but pairing is not control
-             * authorization. Reject until an operator-provisioned peer and
-             * fresh GRBL status gate are connected to mpg_motion_admit().
-             */
             uint8_t result = ESPNOW_RESULT_ERROR;
+#if MPG_ENABLE_MOTION
+            /*
+             * This path only works with a locally provisioned six-byte MAC,
+             * a current GRBL Idle report and a live receiver motion lease.
+             * Actual machine admission is opt-in at compile time.
+             */
+            const bool trusted = memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
+            if (trusted && mpg_mutex && packet.payload_len == 8) {
+                const char axis = (char)packet.payload[0];
+                const bool deadman = packet.payload[1] == 1;
+                const uint32_t bits = (uint32_t)packet.payload[2] |
+                    ((uint32_t)packet.payload[3] << 8) |
+                    ((uint32_t)packet.payload[4] << 16) |
+                    ((uint32_t)packet.payload[5] << 24);
+                const int32_t microns = (int32_t)bits;
+                const uint16_t feed = (uint16_t)packet.payload[6] |
+                                      ((uint16_t)packet.payload[7] << 8);
+                char cmd[64];
+                const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+                xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                const bool fresh = mpg_grbl_status_fresh_idle(&mpg_grbl, now, 250);
+                if (fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,
+                                                    microns, feed)) {
+                    mpg_motion_result_t admitted = mpg_motion_admit(
+                        &mpg_lease, packet.mac, packet.session_id, packet.seq,
+                        trusted, deadman, fresh, now, 250);
+                    if (admitted == MPG_MOTION_OK) {
+                        const int len = (int)strlen(cmd);
+                        if (uart_write_bytes(UART_NUM, cmd, len) == len)
+                            result = ESPNOW_RESULT_OK;
+                        else
+                            mpg_motion_revoke(&mpg_lease);
+                    } else if (admitted == MPG_MOTION_EXPIRED) {
+                        mpg_stop_uart();
+                    }
+                }
+                xSemaphoreGive(mpg_mutex);
+            }
+#endif
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;
@@ -620,6 +727,11 @@ static void espnow_rx_task(void *pvParameters)
              * Use the UART driver directly so cancellation does not sit
              * behind queued G-code in serial_send_data().
              */
+            if (mpg_mutex) {
+                xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                mpg_motion_revoke(&mpg_lease);
+                xSemaphoreGive(mpg_mutex);
+            }
             const uint8_t jog_cancel = 0x85;
             int written = uart_write_bytes(UART_NUM,
                                            (const char *)&jog_cancel, 1);
@@ -1144,6 +1256,12 @@ void espnow_init_handler(void)
         return;
     }
 
+    mpg_mutex = xSemaphoreCreateMutex();
+    if (!mpg_mutex) {
+        ESP_LOGE(TAG, "MPG watchdog mutex allocation failed");
+        esp_now_deinit();
+        return;
+    }
     espnow_rx_queue = xQueueCreate(ESPNOW_RX_QUEUE_SIZE,
                                     sizeof(espnow_rx_packet_t));
     espnow_legacy_rx_queue = xQueueCreate(ESPNOW_LEGACY_RX_QUEUE_SIZE,
@@ -1203,6 +1321,13 @@ void espnow_init_handler(void)
         xTaskCreate(espnow_peer_monitor_task, "espnow_monitor", 3072,
                     NULL, 3, NULL);
 
+    if (xTaskCreate(mpg_watchdog_task, "mpg_watchdog", 3072,
+                    NULL, 6, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "CRITICAL: MPG watchdog failed; motion disabled");
+#if MPG_ENABLE_MOTION
+        abort();
+#endif
+    }
     espnow_initialized = true;
     ESP_LOGI(TAG, "ESP-NOW attivo sul canale %d, nuovo protocollo v%d, max peer=%d",
              espnow_channel, ESPNOW_PROTOCOL_VERSION, MAX_ESPNOW_PEERS);
@@ -1211,8 +1336,9 @@ void espnow_init_handler(void)
 
 void espnow_send_uart_response(const uint8_t *data, int len)
 {
-    if (!data || len <= 0 || espnow_get_peer_count() == 0)
-        return;
+    if (!data || len <= 0) return;
+    mpg_telemetry_ingest(data, len);
+    if (espnow_get_peer_count() == 0) return;
 
     int send_len = len;
     if (send_len > ESPNOW_MAX_PAYLOAD)
