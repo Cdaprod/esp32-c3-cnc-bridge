@@ -26,9 +26,9 @@ mpg_motion_result_t mpg_motion_admit(mpg_motion_lease_t *lease,
         return MPG_MOTION_EXPIRED; /* caller MUST cancel physical jogging */
     }
     if (lease->active) {
+        const uint16_t delta = (uint16_t)(sequence - lease->sequence);
         if (memcmp(lease->owner, owner, 6) != 0 ||
-            lease->session != session ||
-            (int16_t)(sequence - lease->sequence) <= 0)
+            lease->session != session || delta == 0 || delta >= 32768)
             return MPG_MOTION_REJECT;
     }
     memcpy(lease->owner, owner, 6);
