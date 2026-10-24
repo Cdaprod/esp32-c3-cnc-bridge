@@ -305,6 +305,13 @@ static bool new_type_is_valid(uint8_t type, uint16_t payload_len)
         return payload_len == 0;
     case ESPNOW_MSG_SENSOR_ASSIGNMENT:
         return payload_len == 1;
+    case ESPNOW_MSG_MPG_JOG:
+        return payload_len == 8;
+    case ESPNOW_MSG_MPG_STOP:
+        return payload_len == 0;
+    case ESPNOW_MSG_MPG_JOG_ACK:
+    case ESPNOW_MSG_MPG_STOP_ACK:
+        return payload_len == 1;
     case ESPNOW_MSG_UART_COMMAND:
         return payload_len > 0;
     case ESPNOW_MSG_UART_ACK:
@@ -590,6 +597,27 @@ static void espnow_rx_task(void *pvParameters)
             // Direzione prevista: bridge -> sensor. Non accettare questo
             // messaggio come comando proveniente dal peer.
             break;
+
+        case ESPNOW_MSG_MPG_JOG: {
+            /*
+             * Protocol dispatch exists, but pairing is not control
+             * authorization. Reject until an operator-provisioned peer and
+             * fresh GRBL status gate are connected to mpg_motion_admit().
+             */
+            uint8_t result = ESPNOW_RESULT_ERROR;
+            send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
+                                packet.session_id, packet.seq, &result, 1);
+            break;
+        }
+
+        case ESPNOW_MSG_MPG_STOP: {
+            /* Never report a machine stop unless UART realtime cancellation
+             * was actually issued. Motion is not currently enabled. */
+            uint8_t result = ESPNOW_RESULT_ERROR;
+            send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
+                                packet.session_id, packet.seq, &result, 1);
+            break;
+        }
 
         case ESPNOW_MSG_UART_COMMAND: {
             /*
