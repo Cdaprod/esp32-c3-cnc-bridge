@@ -20,6 +20,7 @@
 #include "espnow_config.h"
 #include "espnow_protocol.h"
 #include "serial_handler.h"
+#include "tcp_server.h"
 #include "my_logs.h"
 #include "nvs_storage.h"
 #include "mpg_motion.h"
@@ -100,7 +101,8 @@ static void mpg_watchdog_task(void *unused)
         bool expired = false;
         xSemaphoreTake(mpg_mutex, portMAX_DELAY);
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
-        if (mpg_motion_expired(&mpg_lease, now)) {
+        if (mpg_motion_expired(&mpg_lease, now) ||
+            (mpg_lease.active && tcp_server_get_client_count() > 0)) {
             mpg_motion_revoke(&mpg_lease);
             expired = true;
         }
@@ -707,7 +709,9 @@ static void espnow_rx_task(void *pvParameters)
              */
             const bool trusted = mpg_trusted_ready &&
                 memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
-            if (trusted && mpg_mutex && packet.payload_len == 8) {
+            if (trusted && mpg_mutex && packet.payload_len == 8 &&
+                tcp_server_get_client_count() == 0 &&
+                serial_uart_tx_idle()) {
                 const char axis = (char)packet.payload[0];
                 const bool deadman = packet.payload[1] == 1;
                 const uint32_t bits = (uint32_t)packet.payload[2] |
