@@ -11,4 +11,8 @@ end = source.index("        case ESPNOW_MSG_HEARTBEAT:", start)
 handler = source[start:end]
 assert "serial_send_data(" not in handler, "unsafe raw UART transmit bypass restored"
 assert "ESPNOW_RESULT_ERROR" in handler, "UART command must reject by default"
-print("v1 UART_COMMAND fail-closed regression passed")
+legacy_start = source.index("static void espnow_legacy_rx_task(void *pvParameters)\n{")
+legacy_end = source.index("static bool parse_legacy_command(", legacy_start)
+legacy_handler = source[legacy_start:legacy_end]
+assert "serial_send_data(" not in legacy_handler, "legacy ESP-NOW raw UART bypass restored"
+print("v1 and legacy UART_COMMAND fail-closed regressions passed")
