@@ -88,7 +88,7 @@ static void mpg_watchdog_task(void *unused)
         xSemaphoreGive(mpg_mutex);
         if (expired) {
             mpg_stop_uart();
-            ESP_LOGW(TAG, "MPG lease expired: GRBL jog cancel sent");
+            ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
         }
     }
 }
