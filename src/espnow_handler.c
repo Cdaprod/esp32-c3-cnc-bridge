@@ -701,7 +701,18 @@ static void espnow_rx_task(void *pvParameters)
                 char cmd[64];
                 const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
-                const bool fresh = mpg_grbl_status_fresh_idle(&mpg_grbl, now, 250);
+                const bool fresh_idle =
+                    mpg_grbl_status_fresh_idle(&mpg_grbl, now, 250);
+                /* While an owned lease is active GRBL may report Jog;
+                 * only that same MAC/session may extend it. */
+                const bool owned_jog =
+                    mpg_lease.active &&
+                    memcmp(mpg_lease.owner, packet.mac, 6) == 0 &&
+                    mpg_lease.session == packet.session_id &&
+                    mpg_grbl.seen && !mpg_grbl.alarm &&
+                    (uint32_t)(now - mpg_grbl.updated_ms) <= 250 &&
+                    strncmp(mpg_grbl.line, "<Jog|", 5) == 0;
+                const bool fresh = fresh_idle || owned_jog;
                 if (fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,
                                                     microns, feed)) {
                     mpg_motion_result_t admitted = mpg_motion_admit(
