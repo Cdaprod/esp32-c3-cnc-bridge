@@ -15,6 +15,8 @@ void serial_init(void);
 // Accoda i dati: la scrittura fisica sulla UART viene eseguita dal task TX.
 void serial_send_data(const uint8_t *data, int length);
 void serial_send_string(const char *str);
+/* True only when normal UART TX queue is empty and writer is idle. */
+bool serial_uart_tx_idle(void);
 void serial_task_start(void);
 QueueHandle_t serial_get_queue(void);
 bool serial_get_data(uart_data_t **data, TickType_t wait_time);
