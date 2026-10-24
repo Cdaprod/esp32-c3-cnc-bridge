@@ -75,6 +75,7 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
 static void mpg_watchdog_task(void *unused)
 {
     (void)unused;
+    uint32_t last_query_ms = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
@@ -86,6 +87,11 @@ static void mpg_watchdog_task(void *unused)
             expired = true;
         }
         xSemaphoreGive(mpg_mutex);
+        if ((uint32_t)(now - last_query_ms) >= 250) {
+            const char status_query = '?';
+            uart_write_bytes(UART_NUM, &status_query, 1);
+            last_query_ms = now;
+        }
         if (expired) {
             mpg_stop_uart();
             ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
@@ -1344,7 +1350,24 @@ void espnow_send_uart_response(const uint8_t *data, int len)
     if (send_len > ESPNOW_MAX_PAYLOAD)
         send_len = ESPNOW_MAX_PAYLOAD;
 
-    // IMPORTANT: UART responses remain raw ESP-NOW frames. Existing pendants
-    // depend on this behavior, so do not wrap them in the new protocol.
+    /* Preserve raw responses for older peers while providing a framed
+     * response for the new CircuitPython C3 client. */
+    uint8_t newer[MAX_ESPNOW_PEERS][6];
+    uint32_t sessions[MAX_ESPNOW_PEERS];
+    int newer_count = 0;
+    if (peers_mutex) {
+        xSemaphoreTake(peers_mutex, portMAX_DELAY);
+        for (int i = 0; i < MAX_ESPNOW_PEERS; ++i) {
+            if (peers[i].active && peers[i].protocol == ESPNOW_PEER_PROTOCOL_NEW) {
+                memcpy(newer[newer_count], peers[i].mac, 6);
+                sessions[newer_count] = peers[i].last_rx_session;
+                newer_count++;
+            }
+        }
+        xSemaphoreGive(peers_mutex);
+    }
+    for (int i = 0; i < newer_count; ++i)
+        send_simple_message(newer[i], ESPNOW_MSG_UART_RESPONSE,
+                            sessions[i], 0, data, (uint16_t)send_len);
     espnow_broadcast_to_peers(data, send_len);
 }
