@@ -42,7 +42,7 @@ mpg_motion_result_t mpg_motion_admit(mpg_motion_lease_t *lease,
 bool mpg_motion_format_jog(char *output, size_t capacity,
     char axis, int32_t distance_microns, uint16_t feed_mm_min)
 {
-    if (!output || capacity < 32 ||
+    if (!output || capacity < 48 ||
         !(axis == 'X' || axis == 'Y' || axis == 'Z') ||
         distance_microns == 0 || distance_microns < -1000 ||
         distance_microns > 1000 ||
