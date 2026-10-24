@@ -592,25 +592,19 @@ static void espnow_rx_task(void *pvParameters)
             break;
 
         case ESPNOW_MSG_UART_COMMAND: {
-            uint8_t duplicate_result = ESPNOW_RESULT_ERROR;
-            if (peer_accepts_sequence(&packet, &duplicate_result)) {
-                send_simple_message(packet.mac, ESPNOW_MSG_UART_ACK,
-                                     packet.session_id, packet.seq,
-                                     &duplicate_result, 1);
-                break;
-            }
-
+            /*
+             * The upstream bridge forwarded arbitrary, unauthenticated
+             * UART_COMMAND bytes directly to GRBL. Radio pairing and the
+             * sensor GPIO function assignment do not authorize CNC motion.
+             * Reject this legacy escape hatch until a dedicated authorized
+             * MPG command handler, UART arbitration, and receiver-side
+             * timeout cancellation are integrated and validated.
+             */
             uint8_t result = ESPNOW_RESULT_ERROR;
-            if (packet.payload_len > 0) {
-                serial_send_data(packet.payload, packet.payload_len);
-                if (packet.payload[packet.payload_len - 1] != '\n')
-                    serial_send_data((const uint8_t*)"\n", 1);
-                result = ESPNOW_RESULT_OK;
-            }
-
-            remember_sequence(&packet, result);
             send_simple_message(packet.mac, ESPNOW_MSG_UART_ACK,
                                 packet.session_id, packet.seq, &result, 1);
+            ESP_LOGW(TAG, "Unsafe v1 UART_COMMAND rejected from " MACSTR,
+                     MAC2STR(packet.mac));
             break;
         }
 
