@@ -634,14 +634,13 @@ static void espnow_legacy_rx_task(void *pvParameters)
 
         mark_peer_activity(packet.mac);
 
-        // The original pendant protocol is intentionally forwarded unchanged.
-        // The callback has already sent the legacy 3-byte ACK, preserving the
-        // original pendant timing/behavior.
-        serial_send_data(packet.payload, packet.payload_len);
-        if (packet.payload_len > 0 &&
-            packet.payload[packet.payload_len - 1] != '\n') {
-            serial_send_data((const uint8_t*)"\n", 1);
-        }
+        /*
+         * Legacy packets carry unbounded raw G-code without receiver-side
+         * lease/authorization. Keep pairing compatibility, but do not allow
+         * this route to bypass the dedicated MPG admission handler.
+         */
+        ESP_LOGW(TAG, "Unsafe legacy ESP-NOW UART packet rejected from " MACSTR,
+                 MAC2STR(packet.mac));
     }
 }
 
