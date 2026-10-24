@@ -12,6 +12,8 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_motion.c tests/mpg_motion_test.c -o /tmp/mpg_motion_test
           /tmp/mpg_motion_test
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_grbl_status.c tests/mpg_grbl_status_test.c -o /tmp/mpg_grbl_status_test
+          /tmp/mpg_grbl_status_test
       - name: Verify unsafe ESP-NOW UART forwarding remains disabled
         run: |
           python3 tests/test_uart_command_gate.py
