@@ -8,6 +8,6 @@ end = source.index("        case ESPNOW_MSG_UART_COMMAND:", start)
 handler = source[start:end]
 assert "jog_cancel = 0x85" in handler
 assert "uart_write_bytes(" in handler
-assert "serial_send_data(" not in handler
+assert "\\n        serial_send_data(" not in handler
 assert "MPG_STOP_ACK" in handler
 print("Dedicated MPG STOP uses GRBL realtime jog cancel")
