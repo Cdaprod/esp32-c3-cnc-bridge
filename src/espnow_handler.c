@@ -8,6 +8,8 @@
 #include <esp_mac.h>
 #include <esp_timer.h>
 #include <driver/gpio.h>
+#include <driver/uart.h>
+#include "config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -611,9 +613,18 @@ static void espnow_rx_task(void *pvParameters)
         }
 
         case ESPNOW_MSG_MPG_STOP: {
-            /* Never report a machine stop unless UART realtime cancellation
-             * was actually issued. Motion is not currently enabled. */
-            uint8_t result = ESPNOW_RESULT_ERROR;
+            /*
+             * GRBL 1.1 realtime jog cancel is byte 0x85, without a newline.
+             * This is accepted even when no motion authorization exists:
+             * stopping motion cannot create new commanded movement.
+             * Use the UART driver directly so cancellation does not sit
+             * behind queued G-code in serial_send_data().
+             */
+            const uint8_t jog_cancel = 0x85;
+            int written = uart_write_bytes(UART_NUM,
+                                           (const char *)&jog_cancel, 1);
+            uint8_t result = written == 1 ?
+                ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;
