@@ -92,10 +92,10 @@ static void init_default_config(bridge_config_t *config) {
     config->ap_channel = 6;
     strcpy(config->ap_ssid, "ESP32-C3-Serial-Bridge");
     strcpy(config->ap_password, "12345678");
-    strcpy(config->static_ip, "192.168.1.123");
-    strcpy(config->static_gateway, "192.168.1.1");
+    strcpy(config->static_ip, "192.168.0.123");
+    strcpy(config->static_gateway, "192.168.0.1");
     strcpy(config->static_netmask, "255.255.255.0");
-    config->use_static_ip = true;
+    config->use_static_ip = false;
     config->debug_level = ENABLE_DEBUG_LOGS;
     
     // ========== GrblHAL Advanced defaults ==========
@@ -117,6 +117,20 @@ static void init_default_config(bridge_config_t *config) {
              config->network_count, config->debug_level);
 }
 
+
+static void sync_default_networks(void) {
+    for (int i = 0; i < (int)DEFAULT_NETWORKS_COUNT; i++) {
+        const char *ssid = default_networks[i].ssid;
+        const char *password = default_networks[i].password;
+
+        if (ssid && password && ssid[0]) {
+            if (!nvs_storage_add_network(ssid, password)) {
+                ESP_LOGW(TAG, "Could not synchronize default Wi-Fi network: %s", ssid);
+            }
+        }
+    }
+}
+
 void nvs_storage_init(void) {
     bridge_config_t default_config;
     init_default_config(&default_config);
@@ -135,9 +149,9 @@ void nvs_storage_init(void) {
     } else {
         // Verifica che l'IP statico sia valido, altrimenti correggi
         if (strlen(g_config.static_ip) == 0 || strcmp(g_config.static_ip, "0.0.0.0") == 0) {
-            ESP_LOGW(TAG, "IP statico non valido, correggo a 192.168.1.123");
-            strcpy(g_config.static_ip, "192.168.1.123");
-            strcpy(g_config.static_gateway, "192.168.1.1");
+            ESP_LOGW(TAG, "IP statico non valido, correggo a 192.168.0.123");
+            strcpy(g_config.static_ip, "192.168.0.123");
+            strcpy(g_config.static_gateway, "192.168.0.1");
             strcpy(g_config.static_netmask, "255.255.255.0");
             g_config.use_static_ip = true;
             nvs_storage_save_config();
@@ -218,6 +232,8 @@ void nvs_storage_init(void) {
         ESP_LOGI(TAG, "Configurazione caricata: %d reti, IP=%s, debug_level=%d", 
                  g_config.network_count, g_config.static_ip, g_config.debug_level);
     }
+    sync_default_networks();
+
 }
 
 bool nvs_storage_save_config(void) {
