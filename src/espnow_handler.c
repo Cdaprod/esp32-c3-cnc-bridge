@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include "sdkconfig.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
@@ -23,18 +25,34 @@
 #include "mpg_motion.h"
 #include "mpg_grbl_status.h"
 
-#ifndef MPG_ENABLE_MOTION
+#ifdef CONFIG_MPG_ENABLE_MOTION
+#define MPG_ENABLE_MOTION CONFIG_MPG_ENABLE_MOTION
+#else
 #define MPG_ENABLE_MOTION 0
 #endif
-/*
- * Motion is opt-in only after physical commissioning and local peer
- * provisioning. Do not set this using a paired or broadcast MAC.
- */
+/* Configured using idf.py menuconfig, not firmware-source substitutions. */
 #if MPG_ENABLE_MOTION
-#ifndef MPG_TRUSTED_PEER_MAC
-#error "MPG_TRUSTED_PEER_MAC must be defined as six comma-separated bytes"
-#endif
-static const uint8_t mpg_trusted_peer[6] = { MPG_TRUSTED_PEER_MAC };
+static uint8_t mpg_trusted_peer[6] = {0};
+static bool mpg_trusted_ready = false;
+static bool mpg_provision_peer(void)
+{
+    const char *mac = CONFIG_MPG_TRUSTED_MAC;
+    unsigned int octets[6];
+    int consumed = 0;
+    if (sscanf(mac, "%2x:%2x:%2x:%2x:%2x:%2x%n",
+               &octets[0], &octets[1], &octets[2], &octets[3],
+               &octets[4], &octets[5], &consumed) != 6 ||
+        consumed != 17 || mac[consumed] != '\0')
+        return false;
+    bool any_nonzero = false, all_broadcast = true;
+    for (int i = 0; i < 6; ++i) {
+        mpg_trusted_peer[i] = (uint8_t)octets[i];
+        if (octets[i] != 0) any_nonzero = true;
+        if (octets[i] != 255) all_broadcast = false;
+    }
+    return any_nonzero && !all_broadcast &&
+           !(mpg_trusted_peer[0] & 1); /* reject multicast MAC */
+}
 #endif
 static mpg_motion_lease_t mpg_lease = {0};
 static mpg_grbl_status_t mpg_grbl = {0};
@@ -687,7 +705,8 @@ static void espnow_rx_task(void *pvParameters)
              * a current GRBL Idle report and a live receiver motion lease.
              * Actual machine admission is opt-in at compile time.
              */
-            const bool trusted = memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
+            const bool trusted = mpg_trusted_ready &&
+                memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
             if (trusted && mpg_mutex && packet.payload_len == 8) {
                 const char axis = (char)packet.payload[0];
                 const bool deadman = packet.payload[1] == 1;
@@ -1279,6 +1298,12 @@ void espnow_init_handler(void)
         esp_now_deinit();
         return;
     }
+#if MPG_ENABLE_MOTION
+    mpg_trusted_ready = mpg_provision_peer();
+    if (!mpg_trusted_ready) {
+        ESP_LOGE(TAG, "MPG motion disabled: trusted peer MAC not provisioned");
+    }
+#endif
     espnow_rx_queue = xQueueCreate(ESPNOW_RX_QUEUE_SIZE,
                                     sizeof(espnow_rx_packet_t));
     espnow_legacy_rx_queue = xQueueCreate(ESPNOW_LEGACY_RX_QUEUE_SIZE,
