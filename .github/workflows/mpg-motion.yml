@@ -1,0 +1,14 @@
+name: MPG motion admission tests
+on:
+  push:
+    branches: [main, feature/wireless-mpg-jogging]
+  pull_request:
+jobs:
+  c-motion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test receiver motion logic
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_motion.c tests/mpg_motion_test.c -o /tmp/mpg_motion_test
+          /tmp/mpg_motion_test
