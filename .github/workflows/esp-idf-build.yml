@@ -16,3 +16,8 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py set-target esp32c3
           idf.py build
+      - name: Compile experimental motion-enabled configuration (CI only)
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-ci.defaults build
