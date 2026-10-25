@@ -2,12 +2,16 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include "sdkconfig.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_timer.h>
 #include <driver/gpio.h>
+#include <driver/uart.h>
+#include "config.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -16,8 +20,105 @@
 #include "espnow_config.h"
 #include "espnow_protocol.h"
 #include "serial_handler.h"
+#include "tcp_server.h"
 #include "my_logs.h"
 #include "nvs_storage.h"
+#include "mpg_motion.h"
+#include "mpg_grbl_status.h"
+
+#ifdef CONFIG_MPG_ENABLE_MOTION
+#define MPG_ENABLE_MOTION CONFIG_MPG_ENABLE_MOTION
+#else
+#define MPG_ENABLE_MOTION 0
+#endif
+/* Configured using idf.py menuconfig, not firmware-source substitutions. */
+#if MPG_ENABLE_MOTION
+static uint8_t mpg_trusted_peer[6] = {0};
+static bool mpg_trusted_ready = false;
+static bool mpg_provision_peer(void)
+{
+    const char *mac = CONFIG_MPG_TRUSTED_MAC;
+    unsigned int octets[6];
+    int consumed = 0;
+    if (sscanf(mac, "%2x:%2x:%2x:%2x:%2x:%2x%n",
+               &octets[0], &octets[1], &octets[2], &octets[3],
+               &octets[4], &octets[5], &consumed) != 6 ||
+        consumed != 17 || mac[consumed] != '\0')
+        return false;
+    bool any_nonzero = false, all_broadcast = true;
+    for (int i = 0; i < 6; ++i) {
+        mpg_trusted_peer[i] = (uint8_t)octets[i];
+        if (octets[i] != 0) any_nonzero = true;
+        if (octets[i] != 255) all_broadcast = false;
+    }
+    return any_nonzero && !all_broadcast &&
+           !(mpg_trusted_peer[0] & 1); /* reject multicast MAC */
+}
+#endif
+static mpg_motion_lease_t mpg_lease = {0};
+static mpg_grbl_status_t mpg_grbl = {0};
+static SemaphoreHandle_t mpg_mutex = NULL;
+static char mpg_line[128];
+static size_t mpg_line_len = 0;
+static bool mpg_line_overflow = false;
+
+static bool mpg_stop_uart(void)
+{
+    const uint8_t cancel = 0x85;
+    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1) == 1;
+}
+
+static void mpg_telemetry_ingest(const uint8_t *data, int len)
+{
+    if (!data || len <= 0 || !mpg_mutex) return;
+    xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+    for (int i = 0; i < len; ++i) {
+        const char c = (char)data[i];
+        if (c == '\n' || c == '\r') {
+            if (!mpg_line_overflow && mpg_line_len) {
+                mpg_grbl_status_parse(&mpg_grbl, mpg_line, mpg_line_len,
+                                     (uint32_t)(esp_timer_get_time() / 1000));
+            }
+            mpg_line_len = 0;
+            mpg_line_overflow = false;
+        } else if (!mpg_line_overflow) {
+            if (mpg_line_len < sizeof(mpg_line))
+                mpg_line[mpg_line_len++] = c;
+            else
+                mpg_line_overflow = true;
+        }
+    }
+    xSemaphoreGive(mpg_mutex);
+}
+
+static void mpg_watchdog_task(void *unused)
+{
+    (void)unused;
+    uint32_t last_query_ms = 0;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(25));
+        if (!mpg_mutex) continue;
+        bool expired = false;
+        xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+        const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+        if (mpg_motion_expired(&mpg_lease, now) ||
+            (mpg_lease.active && tcp_server_get_client_count() > 0)) {
+            mpg_motion_revoke(&mpg_lease);
+            expired = true;
+        }
+        xSemaphoreGive(mpg_mutex);
+        if ((uint32_t)(now - last_query_ms) >= 250) {
+            const char status_query = '?';
+            uart_write_bytes(UART_NUM, &status_query, 1);
+            last_query_ms = now;
+        }
+        if (expired) {
+            mpg_stop_uart();
+            ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
+        }
+    }
+}
+
 
 static const char *TAG = "ESPNOW";
 
@@ -305,6 +406,13 @@ static bool new_type_is_valid(uint8_t type, uint16_t payload_len)
         return payload_len == 0;
     case ESPNOW_MSG_SENSOR_ASSIGNMENT:
         return payload_len == 1;
+    case ESPNOW_MSG_MPG_JOG:
+        return payload_len == 8;
+    case ESPNOW_MSG_MPG_STOP:
+        return payload_len == 0;
+    case ESPNOW_MSG_MPG_JOG_ACK:
+    case ESPNOW_MSG_MPG_STOP_ACK:
+        return payload_len == 1;
     case ESPNOW_MSG_UART_COMMAND:
         return payload_len > 0;
     case ESPNOW_MSG_UART_ACK:
@@ -591,26 +699,103 @@ static void espnow_rx_task(void *pvParameters)
             // messaggio come comando proveniente dal peer.
             break;
 
-        case ESPNOW_MSG_UART_COMMAND: {
-            uint8_t duplicate_result = ESPNOW_RESULT_ERROR;
-            if (peer_accepts_sequence(&packet, &duplicate_result)) {
-                send_simple_message(packet.mac, ESPNOW_MSG_UART_ACK,
-                                     packet.session_id, packet.seq,
-                                     &duplicate_result, 1);
-                break;
-            }
-
+        case ESPNOW_MSG_MPG_JOG: {
             uint8_t result = ESPNOW_RESULT_ERROR;
-            if (packet.payload_len > 0) {
-                serial_send_data(packet.payload, packet.payload_len);
-                if (packet.payload[packet.payload_len - 1] != '\n')
-                    serial_send_data((const uint8_t*)"\n", 1);
-                result = ESPNOW_RESULT_OK;
+#if MPG_ENABLE_MOTION
+            /*
+             * This path only works with a locally provisioned six-byte MAC,
+             * a current GRBL Idle report and a live receiver motion lease.
+             * Actual machine admission is opt-in at compile time.
+             */
+            const bool trusted = mpg_trusted_ready &&
+                memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
+            if (trusted && mpg_mutex && packet.payload_len == 8 &&
+                tcp_server_get_client_count() == 0 &&
+                serial_uart_tx_idle()) {
+                const char axis = (char)packet.payload[0];
+                const bool deadman = packet.payload[1] == 1;
+                const uint32_t bits = (uint32_t)packet.payload[2] |
+                    ((uint32_t)packet.payload[3] << 8) |
+                    ((uint32_t)packet.payload[4] << 16) |
+                    ((uint32_t)packet.payload[5] << 24);
+                const int32_t microns = (int32_t)bits;
+                const uint16_t feed = (uint16_t)packet.payload[6] |
+                                      ((uint16_t)packet.payload[7] << 8);
+                char cmd[64];
+                const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+                xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                const bool fresh_idle =
+                    mpg_grbl_status_fresh_idle(&mpg_grbl, now, 250);
+                /* While an owned lease is active GRBL may report Jog;
+                 * only that same MAC/session may extend it. */
+                const bool owned_jog =
+                    mpg_lease.active &&
+                    memcmp(mpg_lease.owner, packet.mac, 6) == 0 &&
+                    mpg_lease.session == packet.session_id &&
+                    mpg_grbl.seen && !mpg_grbl.alarm &&
+                    (uint32_t)(now - mpg_grbl.updated_ms) <= 250 &&
+                    strncmp(mpg_grbl.line, "<Jog|", 5) == 0;
+                const bool fresh = fresh_idle || owned_jog;
+                if (fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,
+                                                    microns, feed)) {
+                    mpg_motion_result_t admitted = mpg_motion_admit(
+                        &mpg_lease, packet.mac, packet.session_id, packet.seq,
+                        trusted, deadman, fresh, now, 250);
+                    if (admitted == MPG_MOTION_OK) {
+                        const int len = (int)strlen(cmd);
+                        if (uart_write_bytes(UART_NUM, cmd, len) == len)
+                            result = ESPNOW_RESULT_OK;
+                        else
+                            mpg_motion_revoke(&mpg_lease);
+                    } else if (admitted == MPG_MOTION_EXPIRED) {
+                        mpg_stop_uart();
+                    }
+                }
+                xSemaphoreGive(mpg_mutex);
             }
+#endif
+            send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
+                                packet.session_id, packet.seq, &result, 1);
+            break;
+        }
 
-            remember_sequence(&packet, result);
+        case ESPNOW_MSG_MPG_STOP: {
+            /*
+             * GRBL 1.1 realtime jog cancel is byte 0x85, without a newline.
+             * This is accepted even when no motion authorization exists:
+             * stopping motion cannot create new commanded movement.
+             * Use the UART driver directly so cancellation does not sit
+             * behind queued G-code in serial_send_data().
+             */
+            if (mpg_mutex) {
+                xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                mpg_motion_revoke(&mpg_lease);
+                xSemaphoreGive(mpg_mutex);
+            }
+            const uint8_t jog_cancel = 0x85;
+            int written = uart_write_bytes(UART_NUM,
+                                           (const char *)&jog_cancel, 1);
+            uint8_t result = written == 1 ?
+                ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
+            send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
+                                packet.session_id, packet.seq, &result, 1);
+            break;
+        }
+
+        case ESPNOW_MSG_UART_COMMAND: {
+            /*
+             * The upstream bridge forwarded arbitrary, unauthenticated
+             * UART_COMMAND bytes directly to GRBL. Radio pairing and the
+             * sensor GPIO function assignment do not authorize CNC motion.
+             * Reject this legacy escape hatch until a dedicated authorized
+             * MPG command handler, UART arbitration, and receiver-side
+             * timeout cancellation are integrated and validated.
+             */
+            uint8_t result = ESPNOW_RESULT_ERROR;
             send_simple_message(packet.mac, ESPNOW_MSG_UART_ACK,
                                 packet.session_id, packet.seq, &result, 1);
+            ESP_LOGW(TAG, "Unsafe v1 UART_COMMAND rejected from " MACSTR,
+                     MAC2STR(packet.mac));
             break;
         }
 
@@ -640,14 +825,13 @@ static void espnow_legacy_rx_task(void *pvParameters)
 
         mark_peer_activity(packet.mac);
 
-        // The original pendant protocol is intentionally forwarded unchanged.
-        // The callback has already sent the legacy 3-byte ACK, preserving the
-        // original pendant timing/behavior.
-        serial_send_data(packet.payload, packet.payload_len);
-        if (packet.payload_len > 0 &&
-            packet.payload[packet.payload_len - 1] != '\n') {
-            serial_send_data((const uint8_t*)"\n", 1);
-        }
+        /*
+         * Legacy packets carry unbounded raw G-code without receiver-side
+         * lease/authorization. Keep pairing compatibility, but do not allow
+         * this route to bypass the dedicated MPG admission handler.
+         */
+        ESP_LOGW(TAG, "Unsafe legacy ESP-NOW UART packet rejected from " MACSTR,
+                 MAC2STR(packet.mac));
     }
 }
 
@@ -1112,6 +1296,18 @@ void espnow_init_handler(void)
         return;
     }
 
+    mpg_mutex = xSemaphoreCreateMutex();
+    if (!mpg_mutex) {
+        ESP_LOGE(TAG, "MPG watchdog mutex allocation failed");
+        esp_now_deinit();
+        return;
+    }
+#if MPG_ENABLE_MOTION
+    mpg_trusted_ready = mpg_provision_peer();
+    if (!mpg_trusted_ready) {
+        ESP_LOGE(TAG, "MPG motion disabled: trusted peer MAC not provisioned");
+    }
+#endif
     espnow_rx_queue = xQueueCreate(ESPNOW_RX_QUEUE_SIZE,
                                     sizeof(espnow_rx_packet_t));
     espnow_legacy_rx_queue = xQueueCreate(ESPNOW_LEGACY_RX_QUEUE_SIZE,
@@ -1171,6 +1367,13 @@ void espnow_init_handler(void)
         xTaskCreate(espnow_peer_monitor_task, "espnow_monitor", 3072,
                     NULL, 3, NULL);
 
+    if (xTaskCreate(mpg_watchdog_task, "mpg_watchdog", 3072,
+                    NULL, 6, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "CRITICAL: MPG watchdog failed; motion disabled");
+#if MPG_ENABLE_MOTION
+        abort();
+#endif
+    }
     espnow_initialized = true;
     ESP_LOGI(TAG, "ESP-NOW attivo sul canale %d, nuovo protocollo v%d, max peer=%d",
              espnow_channel, ESPNOW_PROTOCOL_VERSION, MAX_ESPNOW_PEERS);
@@ -1179,14 +1382,32 @@ void espnow_init_handler(void)
 
 void espnow_send_uart_response(const uint8_t *data, int len)
 {
-    if (!data || len <= 0 || espnow_get_peer_count() == 0)
-        return;
+    if (!data || len <= 0) return;
+    mpg_telemetry_ingest(data, len);
+    if (espnow_get_peer_count() == 0) return;
 
     int send_len = len;
     if (send_len > ESPNOW_MAX_PAYLOAD)
         send_len = ESPNOW_MAX_PAYLOAD;
 
-    // IMPORTANT: UART responses remain raw ESP-NOW frames. Existing pendants
-    // depend on this behavior, so do not wrap them in the new protocol.
+    /* Preserve raw responses for older peers while providing a framed
+     * response for the new CircuitPython C3 client. */
+    uint8_t newer[MAX_ESPNOW_PEERS][6];
+    uint32_t sessions[MAX_ESPNOW_PEERS];
+    int newer_count = 0;
+    if (peers_mutex) {
+        xSemaphoreTake(peers_mutex, portMAX_DELAY);
+        for (int i = 0; i < MAX_ESPNOW_PEERS; ++i) {
+            if (peers[i].active && peers[i].protocol == ESPNOW_PEER_PROTOCOL_NEW) {
+                memcpy(newer[newer_count], peers[i].mac, 6);
+                sessions[newer_count] = peers[i].last_rx_session;
+                newer_count++;
+            }
+        }
+        xSemaphoreGive(peers_mutex);
+    }
+    for (int i = 0; i < newer_count; ++i)
+        send_simple_message(newer[i], ESPNOW_MSG_UART_RESPONSE,
+                            sessions[i], 0, data, (uint16_t)send_len);
     espnow_broadcast_to_peers(data, send_len);
 }

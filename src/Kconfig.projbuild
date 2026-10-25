@@ -1,0 +1,17 @@
+menu "Wireless CNC MPG receiver"
+    config MPG_ENABLE_MOTION
+        bool "Enable experimental wireless CNC jogging"
+        default n
+        help
+            OFF by default. Requires operator-controlled machine interlock,
+            verified GRBL UART wiring, independent E-stop, and motion tests.
+            Do not enable solely because ESP-NOW pairing succeeds.
+
+    config MPG_TRUSTED_MAC
+        string "Manually approved pendant Wi-Fi MAC (AA:BB:CC:DD:EE:FF)"
+        default ""
+        depends on MPG_ENABLE_MOTION
+        help
+            This MAC must be provisioned locally. MAC-only checks are not
+            cryptographic authentication; do not use as a safety boundary.
+endmenu

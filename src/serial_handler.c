@@ -15,6 +15,14 @@ static const char *TAG = "SERIAL_HANDLER";
 static QueueHandle_t uart_to_tcp_queue = NULL;
 static QueueHandle_t uart_espnow_queue = NULL;
 static QueueHandle_t uart_tx_queue = NULL;
+static volatile bool uart_tx_busy = false;
+
+bool serial_uart_tx_idle(void)
+{
+    return uart_tx_queue && !uart_tx_busy &&
+           uxQueueMessagesWaiting(uart_tx_queue) == 0;
+}
+
 
 #define UART_TX_QUEUE_SIZE 50
 #define UART_ESPNOW_QUEUE_SIZE 50
@@ -174,6 +182,7 @@ static void uart_tx_task(void *pvParameters) {
     while (1) {
         if (xQueueReceive(uart_tx_queue, &data, portMAX_DELAY) == pdTRUE) {
             if (data && data->data && data->length > 0) {
+                uart_tx_busy = true;
                 int written = uart_write_bytes(UART_NUM, (const char *)data->data, data->length);
                 if (written < 0 || written != data->length) {
                     ESP_LOGW(TAG, "Scrittura UART incompleta: %d/%d", written, data->length);
@@ -186,6 +195,7 @@ static void uart_tx_task(void *pvParameters) {
             }
             serial_free_data(data);
             data = NULL;
+            uart_tx_busy = false;
         }
     }
 }

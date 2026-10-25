@@ -1233,7 +1233,7 @@ static esp_err_t ota_update_handler(httpd_req_t *req) {
         return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Starting OTA update on partition %s (size %d)", update_partition->label, update_partition->size);
+    ESP_LOGI(TAG, "Starting OTA update on partition %s (size %lu)", update_partition->label, (unsigned long)update_partition->size);
     err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &ota_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
