@@ -962,6 +962,8 @@ static void on_espnow_recv_cb(const esp_now_recv_info_t *recv_info,
             send_simple_message(mac, ESPNOW_MSG_PAIR_ACK,
                                 new_packet.session_id, 0,
                                 ack_payload, sizeof(ack_payload));
+            ESP_LOGI(TAG, "PAIR_ACK queued for " MACSTR " session=0x%08lX",
+                     MAC2STR(mac), (unsigned long)new_packet.session_id);
 
             // Invia al nuovo SENSOR l'associazione attuale.
             // 0xFF significa non assegnato.
