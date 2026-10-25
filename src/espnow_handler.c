@@ -455,7 +455,7 @@ static bool parse_packet(const uint8_t *data, int data_len,
     return true;
 }
 
-static void send_simple_message(const uint8_t *mac, uint8_t type,
+static bool send_simple_message(const uint8_t *mac, uint8_t type,
                                 uint32_t session_id, uint16_t seq,
                                 const uint8_t *payload, uint16_t payload_len)
 {
@@ -463,12 +463,13 @@ static void send_simple_message(const uint8_t *mac, uint8_t type,
     size_t packet_len = 0;
     if (!build_packet(type, session_id, seq, payload, payload_len,
                       packet, sizeof(packet), &packet_len))
-        return;
+        return false;
 
     esp_err_t err = esp_now_send(mac, packet, packet_len);
     if (err != ESP_OK)
         ESP_LOGW(TAG, "ESP-NOW send type=0x%02X fallito: %s",
                  type, esp_err_to_name(err));
+    return err == ESP_OK;
 }
 
 static void send_gpio_ack(const uint8_t *mac, uint32_t session_id, uint16_t seq,
@@ -959,11 +960,15 @@ static void on_espnow_recv_cb(const esp_now_recv_info_t *recv_info,
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
                 assigned_function
             };
-            send_simple_message(mac, ESPNOW_MSG_PAIR_ACK,
-                                new_packet.session_id, 0,
-                                ack_payload, sizeof(ack_payload));
-            ESP_LOGI(TAG, "PAIR_ACK queued for " MACSTR " session=0x%08lX",
-                     MAC2STR(mac), (unsigned long)new_packet.session_id);
+            if (send_simple_message(mac, ESPNOW_MSG_PAIR_ACK,
+                                    new_packet.session_id, 0,
+                                    ack_payload, sizeof(ack_payload))) {
+                ESP_LOGI(TAG, "PAIR_ACK queued for " MACSTR " session=0x%08lX",
+                         MAC2STR(mac), (unsigned long)new_packet.session_id);
+            } else {
+                ESP_LOGW(TAG, "PAIR_ACK enqueue failed for " MACSTR,
+                         MAC2STR(mac));
+            }
 
             // Invia al nuovo SENSOR l'associazione attuale.
             // 0xFF significa non assegnato.
