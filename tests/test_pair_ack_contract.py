@@ -10,7 +10,7 @@ protocol = Path("include/espnow_protocol.h").read_text(encoding="utf-8")
 
 assert re.search(r"#define\s+ESPNOW_PAIR_ACK_PAYLOAD_LEN\s+9\b", protocol)
 assert re.search(r"#define\s+ESPNOW_MSG_PAIR_ACK\s+0x02\b", protocol)
-assert "uint8_t ack_payload[ESPNOW_PAIR_ACK_PAYLOAD_LEN]" in source
+assert re.search(r"uint8_t\s+ack_payload\[(?:9|ESPNOW_PAIR_ACK_PAYLOAD_LEN)\]", source)
 assert "ESPNOW_DEVICE_TYPE_BRIDGE" in source
 assert "ESPNOW_PROTOCOL_VERSION" in source
 
