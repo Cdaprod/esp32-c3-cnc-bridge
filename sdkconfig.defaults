@@ -1,2 +1,3 @@
-CONFIG_IDF_TARGET="esp32c3"
+# Keep ESP-IDF diagnostics on the chip's independent USB Serial/JTAG console.
+# include/config.h assigns UART0/GPIO21 TX/GPIO20 RX to the GRBL controller.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
