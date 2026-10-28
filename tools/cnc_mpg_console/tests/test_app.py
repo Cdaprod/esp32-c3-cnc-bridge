@@ -247,12 +247,28 @@ def test_s3_loop_work_and_overruns_are_summarized_and_expire(tmp_path):
             app.drain_events()
             app.refresh_status()
             assert app.s3_loop_status == ("3", "2")
-            assert "S3 loop work=3ms overruns=2/10s" in str(
+            assert "loop work=3ms overruns=2/10s" in str(
                 app.query_one("#status").render())
 
             app.s3_loop_status_host_ns = time.monotonic_ns() - 31_000_000_000
             app.refresh_status()
-            assert "S3 loop stale" in str(app.query_one("#status").render())
+            assert "loop stale" in str(app.query_one("#status").render())
+
+    asyncio.run(scenario())
+
+
+def test_compact_terminal_layout_keeps_device_logs_visible(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.refresh_status()
+            await pilot.pause()
+            assert app.query_one("#status").size.height == 6
+            assert app.query_one("#timeline").region.height >= 4
+            assert app.query_one("#s3-log").size.height >= 3
+            assert app.query_one("#c3-log").size.height >= 3
+            assert app.query_one("#controls").region.bottom <= 24
 
     asyncio.run(scenario())
 

@@ -32,7 +32,7 @@ class ConsoleApp(App):
     RichLog { height: 1fr; scrollbar-size: 1 1; }
     #timeline-title { height: 1; text-style: bold; padding: 0 1; }
     #mpg-trace { height: 1; padding: 0 1; color: $text-muted; }
-    #timeline { height: 12; border: round $secondary; }
+    #timeline { height: 8; border: round $secondary; }
     #controls { height: 3; }
     #filter { width: 1fr; }
     #repl { height: 3; display: none; }
@@ -203,15 +203,61 @@ class ConsoleApp(App):
             if fields.get("reason"):
                 detail += f" reason={fields['reason']}"
             radio_status.append(f"{role} last={detail} ({age_s:.0f}s ago)")
-        self.query_one("#status", Static).update(
-            f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
-            f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
-            f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
-            f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
-            f"Touch S3 {touch_status}\n"
-            f"S3 loop {loop_status}\n"
-            f"Radio last observed: {' | '.join(radio_status)}\n"
-            f"Machine telemetry {telemetry_status}")
+        status = self.query_one("#status", Static)
+        if self.size.width < 100:
+            status.styles.height = 6
+            self.query_one("#timeline").styles.height = 4
+            compact_inputs = "unreported"
+            if self.s3_input_status is not None:
+                backend, inputs, selectors, axis, position, increment, deadman = self.s3_input_status
+                compact_inputs = (f"{backend}:{inputs}/{selectors} ax={axis} "
+                                  f"sel={position} inc={increment} dm={deadman}")
+                if not is_fresh(self.s3_input_status_host_ns,
+                                time.monotonic_ns(),
+                                max_age_ns=30_000_000_000):
+                    compact_inputs = "stale"
+            if self.s3_touch_status is None or self.s3_loop_status is None:
+                compact_touch = "unreported"
+            elif (not is_fresh(self.s3_touch_status_host_ns,
+                               time.monotonic_ns(), max_age_ns=30_000_000_000) or
+                  not is_fresh(self.s3_loop_status_host_ns,
+                               time.monotonic_ns(), max_age_ns=30_000_000_000)):
+                compact_touch = "stale"
+            else:
+                polls, active, reads, busy, irq_idle, errors = self.s3_touch_status
+                work_ms, overruns = self.s3_loop_status
+                compact_touch = (f"p={polls} a={active} r={reads} b={busy} "
+                                 f"i={irq_idle} e={errors} app={work_ms}ms "
+                                 f"ov={overruns}/10s")
+            compact_radio = []
+            now_ns = time.monotonic_ns()
+            for role in ("S3", "C3"):
+                observed = self.radio_link_events[role]
+                if observed is None:
+                    compact_radio.append(f"{role}=unreported")
+                else:
+                    fields, observed_ns = observed
+                    age_s = max(0, now_ns - observed_ns) / 1_000_000_000
+                    compact_radio.append(
+                        f"{role}={fields['state']}({age_s:.0f}s)")
+            status.update(
+                f"S3 {s3} {self.states['S3']} {self.counts['S3']}L/{self.errors['S3']}E  "
+                f"C3 {c3} {self.states['C3']} {self.counts['C3']}L/{self.errors['C3']}E\n"
+                f"Inputs {compact_inputs}\n"
+                f"Touch/loop {compact_touch}\n"
+                f"Radio {' '.join(compact_radio)}\n"
+                f"GRBL {grbl_state} | Machine {telemetry_status}")
+        else:
+            status.styles.height = 6
+            self.query_one("#timeline").styles.height = 8
+            status.update(
+                f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
+                f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
+                f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
+                f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
+                f"Touch S3 {touch_status} | loop {loop_status}\n"
+                f"Radio last observed: {' | '.join(radio_status)}\n"
+                f"Machine telemetry {telemetry_status}")
 
     def drain_events(self) -> None:
         processed = 0
