@@ -210,6 +210,31 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
     asyncio.run(scenario())
 
 
+def test_s3_touch_diagnostics_are_summarized_and_expire(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        observed_at = time.monotonic_ns()
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=runtime touch_polls=120 "
+                        "touch_active_samples=0 touch_i2c_reads=0 "
+                        "touch_i2c_busy=0 touch_irq_idle=120 touch_errors=0",
+                "host_monotonic_ns": observed_at,
+            })
+            app.drain_events()
+            app.refresh_status()
+            assert app.s3_touch_status == ("120", "0", "0", "0", "120", "0")
+            assert "Touch S3 polls=120 active=0 reads=0 bus-busy=0 IRQ-idle=120 errors=0" in str(
+                app.query_one("#status").render())
+
+            app.s3_touch_status_host_ns = time.monotonic_ns() - 31_000_000_000
+            app.refresh_status()
+            assert "Touch S3 stale" in str(app.query_one("#status").render())
+
+    asyncio.run(scenario())
+
+
 def test_serial_burst_renders_in_widget_batches_and_bounds_each_drain(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)

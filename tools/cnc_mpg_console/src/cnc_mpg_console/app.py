@@ -25,7 +25,7 @@ class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     CSS = """
     Screen { layout: vertical; }
-    #status { height: 4; padding: 0 1; }
+    #status { height: 5; padding: 0 1; }
     #panels { height: 1fr; }
     .panel { width: 1fr; border: round $accent; }
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
@@ -66,6 +66,8 @@ class ConsoleApp(App):
         self.grbl_telemetry: dict[str, str] | None = None
         self.s3_input_status: tuple[str, str, str, str, str, str, str] | None = None
         self.s3_input_status_host_ns: int | None = None
+        self.s3_touch_status: tuple[str, str, str, str, str, str] | None = None
+        self.s3_touch_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
         self.mpg_s3_submissions = 0
@@ -165,6 +167,15 @@ class ConsoleApp(App):
                 if "spindle" in self.grbl_telemetry:
                     fields.append("S=" + self.grbl_telemetry["spindle"])
                 telemetry_status = " | ".join(fields) if fields else "no position/feed fields"
+        touch_status = "unreported"
+        if self.s3_touch_status_host_ns is not None:
+            if not is_fresh(self.s3_touch_status_host_ns, time.monotonic_ns(),
+                            max_age_ns=30_000_000_000):
+                touch_status = "stale"
+            else:
+                polls, active, reads, busy, irq_idle, errors = self.s3_touch_status
+                touch_status = (f"polls={polls} active={active} reads={reads} "
+                                f"bus-busy={busy} IRQ-idle={irq_idle} errors={errors}")
         radio_status = []
         now_ns = time.monotonic_ns()
         for role in ("S3", "C3"):
@@ -187,6 +198,7 @@ class ConsoleApp(App):
             f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
             f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
             f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
+            f"Touch S3 {touch_status}\n"
             f"Radio last observed: {' | '.join(radio_status)}\n"
             f"Machine telemetry {telemetry_status}")
 
@@ -248,6 +260,16 @@ class ConsoleApp(App):
                         event.fields["deadman"],
                     )
                     self.s3_input_status_host_ns = event.host_monotonic_ns
+                touch_fields = (
+                    "touch_polls", "touch_active_samples", "touch_i2c_reads",
+                    "touch_i2c_busy", "touch_irq_idle", "touch_errors",
+                )
+                if role == "S3" and event.fields.get("event") == "runtime" and all(
+                        field in event.fields and event.fields[field].isdigit()
+                        for field in touch_fields):
+                    self.s3_touch_status = tuple(
+                        event.fields[field] for field in touch_fields)
+                    self.s3_touch_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
                     self.radio_log_lines[role] += 1
                 elif event.category in ("error", "safety"):
