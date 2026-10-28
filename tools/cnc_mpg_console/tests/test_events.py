@@ -12,6 +12,20 @@ def test_classification_and_fields_are_observed_not_invented():
     assert event.host_time.startswith("2026-01-01T00:00:00")
 
 
+def test_s3_invalid_input_and_encoder_overrun_are_safety_events():
+    assert classify_line(
+        "[event] event=input_validity domain=selectors valid=False reason=not_one_hot"
+    ) == "safety"
+    overrun = Event.from_line(
+        "S3", "[event] event=encoder_overrun delta=100 max_detents=4",
+        monotonic_ns=444)
+    assert overrun.category == "safety"
+    assert overrun.fields == {
+        "event": "encoder_overrun", "delta": "100", "max_detents": "4"}
+    assert classify_line(
+        "[event] event=input_rejected reason=selector_invalid") == "safety"
+
+
 def test_lines_without_available_telemetry_are_generic():
     assert classify_line("plain diagnostic message") == "log"
     assert classify_line("Controller offline") == "controller"
