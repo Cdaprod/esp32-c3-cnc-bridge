@@ -62,6 +62,15 @@ static bool mpg_provision_peer(void)
            !(mpg_trusted_peer[0] & 1); /* reject multicast MAC */
 }
 #endif
+typedef struct {
+    const uint8_t *mac;
+    uint32_t session_id;
+    uint16_t sequence;
+    char axis;
+    int32_t microns;
+    uint16_t feed;
+} mpg_dry_run_log_context_t;
+
 static mpg_motion_lease_t mpg_lease = {0};
 static mpg_grbl_status_t mpg_grbl = {0};
 static SemaphoreHandle_t mpg_mutex = NULL;
@@ -83,8 +92,27 @@ static int mpg_uart_writer(const char *command, size_t length, void *context)
 
 static bool mpg_dry_run_logger(const char *command, void *context)
 {
-    (void)context;
-    ESP_LOGI("MPG", "DRY_RUN command=%s", command);
+    const mpg_dry_run_log_context_t *event = context;
+    if (!command || !event || !event->mac) return false;
+
+    /* Hex keeps the exact G-code recoverable as one parseable log field. */
+    static const char digits[] = "0123456789abcdef";
+    char command_hex[129];
+    size_t length = 0;
+    while (command[length] && length < 64) length++;
+    if (length == 0 || length >= 64 || length * 2 >= sizeof(command_hex))
+        return false;
+    for (size_t i = 0; i < length; i++) {
+        const uint8_t value = (uint8_t)command[i];
+        command_hex[i * 2] = digits[value >> 4];
+        command_hex[i * 2 + 1] = digits[value & 0x0F];
+    }
+    command_hex[length * 2] = '\0';
+    ESP_LOGI("MPG", "event=dry_run result=proposed mac=" MACSTR
+             " session=%lu seq=%u axis=%c microns=%ld feed=%u command_hex=%s",
+             MAC2STR(event->mac), (unsigned long)event->session_id,
+             (unsigned)event->sequence, event->axis, (long)event->microns,
+             (unsigned)event->feed, command_hex);
     return true;
 }
 
@@ -731,15 +759,24 @@ static void espnow_rx_task(void *pvParameters)
                         &mpg_lease, packet.mac, packet.session_id, packet.seq,
                         trusted, deadman, fresh, now, 250);
                     if (admitted == MPG_MOTION_OK) {
+                        mpg_dry_run_log_context_t dry_run_event = {
+                            .mac = packet.mac,
+                            .session_id = packet.session_id,
+                            .sequence = packet.seq,
+                            .axis = axis,
+                            .microns = microns,
+                            .feed = feed,
+                        };
                         const mpg_output_result_t output =
                             mpg_motion_output_command(cmd, MPG_DRY_RUN,
-                                mpg_uart_writer, mpg_dry_run_logger, NULL);
+                                mpg_uart_writer, mpg_dry_run_logger,
+                                &dry_run_event);
                         if (output == MPG_OUTPUT_SENT ||
                             output == MPG_OUTPUT_DRY_RUN) {
                             result = ESPNOW_RESULT_OK;
-                            ESP_LOGI("MPG", "%s accepted MAC=" MACSTR
-                                " session=0x%08lX seq=%u axis=%c delta_um=%ld feed=%u",
-                                MPG_DRY_RUN ? "DRY_RUN" : "UART",
+                            ESP_LOGI("MPG", "event=motion_admission result=accepted mode=%s mac=" MACSTR
+                                " session=%lu seq=%u axis=%c microns=%ld feed=%u",
+                                MPG_DRY_RUN ? "dry_run" : "uart",
                                 MAC2STR(packet.mac),
                                 (unsigned long)packet.session_id,
                                 (unsigned)packet.seq, axis, (long)microns, (unsigned)feed);
