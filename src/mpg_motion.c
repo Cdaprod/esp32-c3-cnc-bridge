@@ -13,6 +13,55 @@ void mpg_motion_revoke(mpg_motion_lease_t *lease)
     if (lease) memset(lease, 0, sizeof(*lease));
 }
 
+void mpg_motion_sequence_reset(mpg_motion_sequence_t *state,
+    const uint8_t owner[6], uint32_t session, uint16_t initial_sequence)
+{
+    if (!state) return;
+    memset(state, 0, sizeof(*state));
+    if (!owner || session == 0) return;
+    memcpy(state->owner, owner, sizeof(state->owner));
+    state->session = session;
+    state->sequence = initial_sequence;
+    state->last_result = 0;
+    state->valid = true;
+}
+
+mpg_sequence_result_t mpg_motion_sequence_accept(mpg_motion_sequence_t *state,
+    const uint8_t owner[6], uint32_t active_session,
+    uint32_t packet_session, uint16_t sequence, uint8_t *duplicate_result)
+{
+    if (duplicate_result) *duplicate_result = 0;
+    if (!state || !owner || active_session == 0 ||
+        packet_session != active_session)
+        return MPG_SEQUENCE_REJECT_SESSION;
+    if (!state->valid) {
+        mpg_motion_sequence_reset(state, owner, active_session,
+                                  (uint16_t)(sequence - 1));
+    }
+    if (state->session != active_session ||
+        memcmp(state->owner, owner, sizeof(state->owner)) != 0)
+        return MPG_SEQUENCE_REJECT_SESSION;
+
+    const uint16_t delta = (uint16_t)(sequence - state->sequence);
+    if (delta == 0) {
+        if (duplicate_result) *duplicate_result = state->last_result;
+        return MPG_SEQUENCE_DUPLICATE;
+    }
+    if (delta >= 0x8000u) return MPG_SEQUENCE_REJECT_STALE;
+
+    state->sequence = sequence;
+    state->last_result = 0; /* A duplicate before completion fails closed. */
+    return MPG_SEQUENCE_NEW;
+}
+
+void mpg_motion_sequence_result(mpg_motion_sequence_t *state,
+    uint32_t session, uint16_t sequence, uint8_t result)
+{
+    if (state && state->valid && state->session == session &&
+        state->sequence == sequence)
+        state->last_result = result;
+}
+
 mpg_motion_result_t mpg_motion_admit(mpg_motion_lease_t *lease,
     const uint8_t owner[6], uint32_t session, uint16_t sequence,
     bool authorized, bool deadman, bool grbl_idle,
@@ -43,7 +92,7 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
     char axis, int32_t distance_microns, uint16_t feed_mm_min)
 {
     if (!output || capacity < 48 ||
-        !(axis == 'X' || axis == 'Y' || axis == 'Z') ||
+        !(axis == 'X' || axis == 'Y' || axis == 'Z' || axis == 'A') ||
         distance_microns == 0 || distance_microns < -1000 ||
         distance_microns > 1000 ||
         feed_mm_min == 0 || feed_mm_min > 1000)
@@ -55,4 +104,20 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
         (long)(abs_um / 1000), (long)(abs_um % 1000),
         (unsigned)feed_mm_min);
     return n > 0 && (size_t)n < capacity;
+}
+
+mpg_output_result_t mpg_motion_output_command(const char *command,
+    bool dry_run, mpg_uart_writer_t uart_writer,
+    mpg_dry_run_logger_t dry_run_logger, void *context)
+{
+    if (!command || command[0] == '\0') return MPG_OUTPUT_FAILED;
+    const size_t length = strlen(command);
+    if (dry_run) {
+        if (!dry_run_logger || !dry_run_logger(command, context))
+            return MPG_OUTPUT_FAILED;
+        return MPG_OUTPUT_DRY_RUN;
+    }
+    if (!uart_writer || uart_writer(command, length, context) != (int)length)
+        return MPG_OUTPUT_FAILED;
+    return MPG_OUTPUT_SENT;
 }

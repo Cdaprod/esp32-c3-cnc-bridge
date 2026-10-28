@@ -79,7 +79,7 @@
 #define ESPNOW_MSG_MPG_JOG_ACK         0x31
 #define ESPNOW_MSG_MPG_STOP            0x32
 #define ESPNOW_MSG_MPG_STOP_ACK        0x33
-/* MPG_JOG: 8 bytes [axis ASCII XYZ][deadman 0/1][signed microns LE32][feed mm/min LE16].
+/* MPG_JOG: 8 bytes [axis ASCII XYZA][deadman 0/1][signed microns LE32][feed mm/min LE16].
  * MPG_STOP: empty payload. ACK: one result byte. Receiver denies until
  * explicit operator authorization, fresh GRBL status and UART stop are wired. */
 

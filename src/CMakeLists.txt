@@ -6,7 +6,9 @@ idf_component_register(
         wifi_manager.c
         WiFiSelector.c
         espnow_handler.c
+        espnow_decode.c
         mpg_motion.c
+        mpg_uart_arbiter.c
         mpg_grbl_status.c
         nvs_storage.c
         web_server.c
