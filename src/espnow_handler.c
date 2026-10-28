@@ -61,6 +61,7 @@ static SemaphoreHandle_t mpg_mutex = NULL;
 static char mpg_line[128];
 static size_t mpg_line_len = 0;
 static bool mpg_line_overflow = false;
+static uint32_t mpg_status_log_ms = 0;
 
 static bool mpg_stop_uart(void)
 {
@@ -76,8 +77,28 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
         const char c = (char)data[i];
         if (c == '\n' || c == '\r') {
             if (!mpg_line_overflow && mpg_line_len) {
-                mpg_grbl_status_parse(&mpg_grbl, mpg_line, mpg_line_len,
-                                     (uint32_t)(esp_timer_get_time() / 1000));
+                const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                char previous[sizeof(mpg_grbl.line)];
+                const bool had_status = mpg_grbl.seen;
+                memcpy(previous, mpg_grbl.line, sizeof(previous));
+                if (mpg_grbl_status_parse(&mpg_grbl, mpg_line, mpg_line_len, now_ms)) {
+                    const char *old_sep = strchr(previous, '|');
+                    const char *new_sep = strchr(mpg_grbl.line, '|');
+                    const size_t old_state_len = old_sep ? (size_t)(old_sep - previous) : 0;
+                    const size_t new_state_len = new_sep ? (size_t)(new_sep - mpg_grbl.line) : 0;
+                    const bool state_changed = !had_status || old_state_len != new_state_len ||
+                        (new_state_len && memcmp(previous, mpg_grbl.line, new_state_len) != 0);
+                    if (state_changed || (uint32_t)(now_ms - mpg_status_log_ms) >= 1000) {
+                        char status_line[sizeof(mpg_grbl.line)];
+                        memcpy(status_line, mpg_grbl.line, sizeof(status_line));
+                        status_line[sizeof(status_line) - 1] = '\0';
+                        mpg_status_log_ms = now_ms;
+                        xSemaphoreGive(mpg_mutex);
+                        ESP_LOGI("GRBL", "event=grbl_status source=uart0 age_ms=0 line=%s",
+                                 status_line);
+                        xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                    }
+                }
             }
             mpg_line_len = 0;
             mpg_line_overflow = false;
@@ -95,6 +116,7 @@ static void mpg_watchdog_task(void *unused)
 {
     (void)unused;
     uint32_t last_query_ms = 0;
+    uint32_t last_query_log_ms = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
@@ -111,6 +133,10 @@ static void mpg_watchdog_task(void *unused)
             const char status_query = '?';
             uart_write_bytes(UART_NUM, &status_query, 1);
             last_query_ms = now;
+            if ((uint32_t)(now - last_query_log_ms) >= 1000) {
+                ESP_LOGI("GRBL", "event=uart_tx source=watchdog operation=status_query interval_ms=250 sampled=1");
+                last_query_log_ms = now;
+            }
         }
         if (expired) {
             mpg_stop_uart();
@@ -702,6 +728,10 @@ static void espnow_rx_task(void *pvParameters)
         case ESPNOW_MSG_MPG_JOG: {
             uint8_t result = ESPNOW_RESULT_ERROR;
 #if MPG_ENABLE_MOTION
+            bool jog_sent = false;
+            char axis = '?';
+            int32_t microns = 0;
+            uint16_t feed = 0;
             /*
              * This path only works with a locally provisioned six-byte MAC,
              * a current GRBL Idle report and a live receiver motion lease.
@@ -712,15 +742,15 @@ static void espnow_rx_task(void *pvParameters)
             if (trusted && mpg_mutex && packet.payload_len == 8 &&
                 tcp_server_get_client_count() == 0 &&
                 serial_uart_tx_idle()) {
-                const char axis = (char)packet.payload[0];
+                axis = (char)packet.payload[0];
                 const bool deadman = packet.payload[1] == 1;
                 const uint32_t bits = (uint32_t)packet.payload[2] |
                     ((uint32_t)packet.payload[3] << 8) |
                     ((uint32_t)packet.payload[4] << 16) |
                     ((uint32_t)packet.payload[5] << 24);
-                const int32_t microns = (int32_t)bits;
-                const uint16_t feed = (uint16_t)packet.payload[6] |
-                                      ((uint16_t)packet.payload[7] << 8);
+                microns = (int32_t)bits;
+                feed = (uint16_t)packet.payload[6] |
+                       ((uint16_t)packet.payload[7] << 8);
                 char cmd[64];
                 const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
@@ -743,15 +773,23 @@ static void espnow_rx_task(void *pvParameters)
                         trusted, deadman, fresh, now, 250);
                     if (admitted == MPG_MOTION_OK) {
                         const int len = (int)strlen(cmd);
-                        if (uart_write_bytes(UART_NUM, cmd, len) == len)
+                        if (uart_write_bytes(UART_NUM, cmd, len) == len) {
                             result = ESPNOW_RESULT_OK;
-                        else
+                            jog_sent = true;
+                        } else {
                             mpg_motion_revoke(&mpg_lease);
+                        }
                     } else if (admitted == MPG_MOTION_EXPIRED) {
                         mpg_stop_uart();
                     }
                 }
                 xSemaphoreGive(mpg_mutex);
+            }
+            if (jog_sent) {
+                ESP_LOGI("GRBL", "event=uart_tx operation=mpg_jog session=%lu seq=%u axis=%c microns=%ld feed=%u",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq, axis, (long)microns,
+                         (unsigned)feed);
             }
 #endif
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
@@ -775,6 +813,8 @@ static void espnow_rx_task(void *pvParameters)
             const uint8_t jog_cancel = 0x85;
             int written = uart_write_bytes(UART_NUM,
                                            (const char *)&jog_cancel, 1);
+            ESP_LOGI("GRBL", "event=uart_tx operation=mpg_stop_cancel session=%lu seq=%u bytes=%d",
+                     (unsigned long)packet.session_id, (unsigned)packet.seq, written);
             uint8_t result = written == 1 ?
                 ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
