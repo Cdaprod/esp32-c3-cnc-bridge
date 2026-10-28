@@ -163,6 +163,9 @@ class ConsoleApp(App):
         if self.paused:
             self.paused_events.append(event)
             return
+        self._render_event(event)
+
+    def _render_event(self, event: Event) -> None:
         term = self.filter_text
         if term and term not in event.message.lower() and term not in event.category.lower():
             return
@@ -175,6 +178,11 @@ class ConsoleApp(App):
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter":
             self.filter_text = event.value.lower().strip()
+            self.query_one("#s3-log", RichLog).clear()
+            self.query_one("#c3-log", RichLog).clear()
+            self.query_one("#timeline", RichLog).clear()
+            for recorded in self.recent:
+                self._render_event(recorded)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "repl" and event.value:
@@ -213,16 +221,9 @@ class ConsoleApp(App):
         self.paused = not self.paused
         self.query_one("#pause", Button).label = "Resume" if self.paused else "Pause"
         if not self.paused:
-            pending, self.paused_events = self.paused_events, []
+            pending, self.paused_events = self.paused_events, deque(maxlen=2000)
             for event in pending:
-                term = self.filter_text
-                if term and term not in event.message.lower() and term not in event.category.lower():
-                    continue
-                if event.source in ("S3", "C3"):
-                    self.query_one(f"#{event.source.lower()}-log", RichLog).write(
-                        f"{event.host_time} {event.category.upper():<10} {event.message}")
-                self.query_one("#timeline", RichLog).write(
-                    f"{event.host_time} {event.source:<2} {event.category.upper():<10} {event.message}")
+                self._render_event(event)
             self._add_event(Event.from_line("HOST", "display resumed"))
 
     def action_export(self) -> None:
