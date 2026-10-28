@@ -87,6 +87,7 @@ static bool mpg_stop_uart(void)
 static int mpg_uart_writer(const char *command, size_t length, void *context)
 {
     (void)context;
+    if (!serial_uart_mpg_owned()) return -1;
     return uart_write_bytes(UART_NUM, command, (uint32_t)length);
 }
 
@@ -153,6 +154,10 @@ static void mpg_watchdog_task(void *unused)
             (mpg_lease.active && tcp_server_get_client_count() > 0)) {
             mpg_motion_revoke(&mpg_lease);
             expired = true;
+            /* Keep the MPG mutex through cancellation and ownership release;
+             * otherwise a new lease could race between revoke and 0x85. */
+            mpg_stop_uart();
+            serial_uart_mpg_release();
         }
         xSemaphoreGive(mpg_mutex);
         if ((uint32_t)(now - last_query_ms) >= 250) {
@@ -161,7 +166,6 @@ static void mpg_watchdog_task(void *unused)
             last_query_ms = now;
         }
         if (expired) {
-            mpg_stop_uart();
             ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
         }
     }
@@ -753,7 +757,17 @@ static void espnow_rx_task(void *pvParameters)
                     (uint32_t)(now - mpg_grbl.updated_ms) <= 250 &&
                     strncmp(mpg_grbl.line, "<Jog|", 5) == 0;
                 const bool fresh = fresh_idle || owned_jog;
-                if (fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,
+#if MPG_ENABLE_MOTION && !MPG_DRY_RUN
+                bool newly_claimed_uart = false;
+                bool uart_owner_ready = serial_uart_mpg_owned();
+                if (!uart_owner_ready && !mpg_lease.active) {
+                    uart_owner_ready = serial_uart_mpg_claim();
+                    newly_claimed_uart = uart_owner_ready;
+                }
+                if (!uart_owner_ready)
+                    reject_reason = "controller_uart_owned";
+#endif
+                if (!reject_reason && fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,
                                                     microns, feed)) {
                     mpg_motion_result_t admitted = mpg_motion_admit(
                         &mpg_lease, packet.mac, packet.session_id, packet.seq,
@@ -782,19 +796,27 @@ static void espnow_rx_task(void *pvParameters)
                                 (unsigned)packet.seq, axis, (long)microns, (unsigned)feed);
                         } else {
                             mpg_motion_revoke(&mpg_lease);
+                            mpg_stop_uart();
+                            serial_uart_mpg_release();
                             ESP_LOGE("MPG", "intent rejected: command output failed");
                         }
                     } else if (admitted == MPG_MOTION_EXPIRED) {
                         mpg_stop_uart();
+                        serial_uart_mpg_release();
                         reject_reason = "motion_lease_expired";
                     } else {
                         reject_reason = deadman ? "motion_admission_denied" :
                                                  "deadman_released";
                     }
                 } else {
-                    reject_reason = fresh ? "invalid_jog_parameters" :
-                                            "grbl_state_stale_or_not_idle";
+                    if (!reject_reason)
+                        reject_reason = fresh ? "invalid_jog_parameters" :
+                                                "grbl_state_stale_or_not_idle";
                 }
+#if MPG_ENABLE_MOTION && !MPG_DRY_RUN
+                if (newly_claimed_uart && !mpg_lease.active)
+                    serial_uart_mpg_release();
+#endif
                 xSemaphoreGive(mpg_mutex);
             } else {
                 reject_reason = !trusted ? "untrusted_peer" :
@@ -823,14 +845,19 @@ static void espnow_rx_task(void *pvParameters)
              * Use the UART driver directly so cancellation does not sit
              * behind queued G-code in serial_send_data().
              */
+            const uint8_t jog_cancel = 0x85;
+            int written;
             if (mpg_mutex) {
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
                 mpg_motion_revoke(&mpg_lease);
-                xSemaphoreGive(mpg_mutex);
-            }
-            const uint8_t jog_cancel = 0x85;
-            int written = uart_write_bytes(UART_NUM,
+                written = uart_write_bytes(UART_NUM,
                                            (const char *)&jog_cancel, 1);
+                serial_uart_mpg_release();
+                xSemaphoreGive(mpg_mutex);
+            } else {
+                written = uart_write_bytes(UART_NUM,
+                                           (const char *)&jog_cancel, 1);
+            }
             uint8_t result = written == 1 ?
                 ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,

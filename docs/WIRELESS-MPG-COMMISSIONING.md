@@ -16,7 +16,7 @@ For a reproducible disarmed dry-run build, keep `CONFIG_MPG_ENABLE_MOTION=n`, ke
 
 ## Important limitations before activating physical movement
 1. ESP-NOW sender MAC allowlisting is not cryptographic authentication. Pairing by itself is insufficient. Provision keys / encrypted peers and an operator arming control for production.
-2. This bridge also exposes a Telnet/UART path. The initial MPG motion writer can interleave with other host senders. Machine-control ownership must be exclusive before motion is enabled.
+2. This bridge also exposes a Telnet/UART path. The MPG follow-up adds an atomic UART ownership arbiter: queued bridge/TCP bytes reserve the normal writer through TX completion, an MPG lease can claim only after that queue drains, and normal TX is rejected while MPG owns the UART. A newly connected TCP client triggers the existing watchdog cancellation/release path. This prevents C3-managed senders from interleaving; it cannot arbitrate an independent device wired directly to GRBL.
 3. A successful `UART_ACK` or `MPG_JOG_ACK` means UART enqueue/write accepted; it does *not* prove that GRBL executed or completed motion. Verify GRBL responses and current positions.
 4. GRBL real-time jog cancel is **not** a safety-rated emergency stop and is not a guarantee of IEC stop-category compliance. A hardwired independent emergency-stop circuit remains necessary.
 5. The user-specified Doesbot connection uses the 5 V↔3.3 V level shifter. Pin-level continuity and signal levels have not been independently measured in this session. Never connect the Doesbot's `V` (+5 V) directly to an ESP32 GPIO.

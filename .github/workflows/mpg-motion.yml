@@ -12,6 +12,8 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_motion.c tests/mpg_motion_test.c -o /tmp/mpg_motion_test
           /tmp/mpg_motion_test
+          cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_uart_arbiter.c tests/mpg_uart_arbiter_test.c -o /tmp/mpg_uart_arbiter_test
+          /tmp/mpg_uart_arbiter_test
           cc -std=c11 -Wall -Wextra -Werror -Iinclude src/espnow_decode.c src/mpg_motion.c src/mpg_grbl_status.c tests/espnow_interop_test.c -o /tmp/espnow_interop_test
           /tmp/espnow_interop_test
           cc -std=c11 -Wall -Wextra -Werror -Iinclude src/mpg_grbl_status.c tests/mpg_grbl_status_test.c -o /tmp/mpg_grbl_status_test

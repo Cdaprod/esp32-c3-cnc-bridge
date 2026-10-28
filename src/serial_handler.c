@@ -8,6 +8,7 @@
 #include <esp_log.h>
 #include "serial_handler.h"
 #include "config.h"
+#include "mpg_uart_arbiter.h"
 
 void espnow_send_uart_response(const uint8_t* data, int len);
 
@@ -15,12 +16,38 @@ static const char *TAG = "SERIAL_HANDLER";
 static QueueHandle_t uart_to_tcp_queue = NULL;
 static QueueHandle_t uart_espnow_queue = NULL;
 static QueueHandle_t uart_tx_queue = NULL;
-static volatile bool uart_tx_busy = false;
+static mpg_uart_arbiter_t mpg_uart_arbiter;
+static portMUX_TYPE mpg_uart_arbiter_mux = portMUX_INITIALIZER_UNLOCKED;
 
 bool serial_uart_tx_idle(void)
 {
-    return uart_tx_queue && !uart_tx_busy &&
-           uxQueueMessagesWaiting(uart_tx_queue) == 0;
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool idle = mpg_uart_arbiter_normal_idle(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return uart_tx_queue && idle;
+}
+
+bool serial_uart_mpg_claim(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool claimed = mpg_uart_arbiter_claim_mpg(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return claimed;
+}
+
+void serial_uart_mpg_release(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    mpg_uart_arbiter_release_mpg(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+}
+
+bool serial_uart_mpg_owned(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool owned = mpg_uart_arbiter_mpg_owned(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return owned;
 }
 
 
@@ -94,6 +121,7 @@ static void free_buffer(uart_data_t *buffer) {
 }
 
 void serial_init(void) {
+    memset(&mpg_uart_arbiter, 0, sizeof(mpg_uart_arbiter));
     const uart_config_t uart_config = {
         .baud_rate = UART_BAUD_RATE,
         .data_bits = UART_DATA_8_BITS,
@@ -138,11 +166,23 @@ void serial_send_data(const uint8_t *data, int length) {
         return;
     }
 
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool reserved = mpg_uart_arbiter_reserve_normal(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    if (!reserved) {
+        ESP_LOGW(TAG, "UART command rejected: MPG lease owns controller");
+        serial_free_data(tx_data);
+        return;
+    }
+
     memcpy(tx_data->data, data, length);
     tx_data->length = length;
 
     if (xQueueSend(uart_tx_queue, &tx_data, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Coda TX UART piena: dati scartati");
+        portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+        mpg_uart_arbiter_complete_normal(&mpg_uart_arbiter);
+        portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
         serial_free_data(tx_data);
     }
 }
@@ -182,7 +222,6 @@ static void uart_tx_task(void *pvParameters) {
     while (1) {
         if (xQueueReceive(uart_tx_queue, &data, portMAX_DELAY) == pdTRUE) {
             if (data && data->data && data->length > 0) {
-                uart_tx_busy = true;
                 int written = uart_write_bytes(UART_NUM, (const char *)data->data, data->length);
                 if (written < 0 || written != data->length) {
                     ESP_LOGW(TAG, "Scrittura UART incompleta: %d/%d", written, data->length);
@@ -195,7 +234,9 @@ static void uart_tx_task(void *pvParameters) {
             }
             serial_free_data(data);
             data = NULL;
-            uart_tx_busy = false;
+            portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+            mpg_uart_arbiter_complete_normal(&mpg_uart_arbiter);
+            portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
         }
     }
 }
