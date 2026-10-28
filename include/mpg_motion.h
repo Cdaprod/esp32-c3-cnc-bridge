@@ -38,11 +38,13 @@ typedef enum {
 
 typedef int (*mpg_uart_writer_t)(const char *command, size_t length,
                                  void *context);
+typedef int (*mpg_realtime_writer_t)(uint8_t command, void *context);
 typedef bool (*mpg_dry_run_logger_t)(const char *command, void *context);
 
 typedef enum {
     MPG_OUTPUT_SENT = 1,
     MPG_OUTPUT_DRY_RUN = 2,
+    MPG_OUTPUT_SUPPRESSED = 3,
     MPG_OUTPUT_FAILED = 0
 } mpg_output_result_t;
 
@@ -72,4 +74,8 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
 mpg_output_result_t mpg_motion_output_command(const char *command,
     bool dry_run, mpg_uart_writer_t uart_writer,
     mpg_dry_run_logger_t dry_run_logger, void *context);
+/* Realtime jog-cancel output is also suppressed unless physical motion is
+ * explicitly enabled; diagnostic builds must not affect another UART owner. */
+mpg_output_result_t mpg_motion_output_cancel(bool allow_physical_output,
+    mpg_realtime_writer_t writer, void *context);
 #endif

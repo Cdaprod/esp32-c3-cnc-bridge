@@ -79,10 +79,17 @@ static size_t mpg_line_len = 0;
 static bool mpg_line_overflow = false;
 static uint32_t mpg_status_log_ms = 0;
 
-static bool mpg_stop_uart(void)
+static int mpg_uart_cancel_writer(uint8_t cancel, void *context)
 {
-    const uint8_t cancel = 0x85;
-    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1) == 1;
+    (void)context;
+    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1);
+}
+
+static mpg_output_result_t mpg_stop_uart(void)
+{
+    return mpg_motion_output_cancel(
+        MPG_ENABLE_MOTION && !MPG_DRY_RUN,
+        mpg_uart_cancel_writer, NULL);
 }
 
 static int mpg_uart_writer(const char *command, size_t length, void *context)
@@ -178,17 +185,18 @@ static void mpg_watchdog_task(void *unused)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
-        bool expired = false;
+        mpg_output_result_t cancel_result = MPG_OUTPUT_SUPPRESSED;
+        bool lease_ended = false;
         xSemaphoreTake(mpg_mutex, portMAX_DELAY);
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (mpg_motion_expired(&mpg_lease, now) ||
             (mpg_lease.active && tcp_server_get_client_count() > 0)) {
             mpg_motion_revoke(&mpg_lease);
-            expired = true;
             /* Keep the MPG mutex through cancellation and ownership release;
              * otherwise a new lease could race between revoke and 0x85. */
-            mpg_stop_uart();
+            cancel_result = mpg_stop_uart();
             serial_uart_mpg_release();
+            lease_ended = true;
         }
         xSemaphoreGive(mpg_mutex);
         if ((uint32_t)(now - last_query_ms) >= 250) {
@@ -200,8 +208,14 @@ static void mpg_watchdog_task(void *unused)
                 last_query_log_ms = now;
             }
         }
-        if (expired) {
-            ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
+        if (lease_ended) {
+            if (cancel_result == MPG_OUTPUT_SENT) {
+                ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
+            } else if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
+                ESP_LOGI("MPG", "MPG lease expired: controller cancel suppressed by disarmed/dry-run mode");
+            } else if (cancel_result == MPG_OUTPUT_FAILED) {
+                ESP_LOGE("MPG", "MPG lease expired: GRBL jog cancel output failed");
+            }
         }
     }
 }
@@ -882,29 +896,36 @@ static void espnow_rx_task(void *pvParameters)
         case ESPNOW_MSG_MPG_STOP: {
             /*
              * GRBL 1.1 realtime jog cancel is byte 0x85, without a newline.
-             * This is accepted even when no motion authorization exists:
-             * stopping motion cannot create new commanded movement.
-             * Use the UART driver directly so cancellation does not sit
-             * behind queued G-code in serial_send_data().
+             * It must bypass the normal TX queue so an enabled physical
+             * cancel cannot wait behind queued G-code. The shared mode gate
+             * suppresses this output in disarmed and dry-run builds.
              */
-            const uint8_t jog_cancel = 0x85;
-            int written;
+            mpg_output_result_t cancel_result;
             if (mpg_mutex) {
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
                 mpg_motion_revoke(&mpg_lease);
-                written = uart_write_bytes(UART_NUM,
-                                           (const char *)&jog_cancel, 1);
+                cancel_result = mpg_stop_uart();
                 serial_uart_mpg_release();
                 xSemaphoreGive(mpg_mutex);
             } else {
-                written = uart_write_bytes(UART_NUM,
-                                           (const char *)&jog_cancel, 1);
+                cancel_result = mpg_stop_uart();
             }
-            uint8_t result = written == 1 ?
+            uint8_t result = cancel_result == MPG_OUTPUT_SENT ?
                 ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
-            ESP_LOGI("GRBL", "event=uart_tx operation=mpg_stop_cancel session=%lu seq=%u bytes=%d",
-                     (unsigned long)packet.session_id,
-                     (unsigned)packet.seq, written);
+            if (cancel_result == MPG_OUTPUT_SENT) {
+                ESP_LOGI("GRBL", "event=uart_tx operation=mpg_stop_cancel session=%lu seq=%u bytes=1",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq);
+            } else if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
+                ESP_LOGW("MPG", "event=motion_admission result=rejected reason=stop_suppressed mode=%s session=%lu seq=%u",
+                         MPG_DRY_RUN ? "dry_run" : "disarmed",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq);
+            } else if (cancel_result == MPG_OUTPUT_FAILED) {
+                ESP_LOGE("MPG", "event=motion_admission result=rejected reason=stop_output_failed session=%lu seq=%u",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq);
+            }
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;

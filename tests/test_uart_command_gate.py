@@ -24,6 +24,14 @@ writer_start = source.index("static int mpg_uart_writer(")
 writer_end = source.index("static bool mpg_dry_run_logger(", writer_start)
 assert "serial_uart_mpg_owned()" in source[writer_start:writer_end], \
        "physical jog writer must require the MPG UART lease"
+cancel_start = source.index("static mpg_output_result_t mpg_stop_uart(")
+cancel_end = source.index("\n}\n", cancel_start) + 3
+cancel_path = source[cancel_start:cancel_end]
+assert "MPG_ENABLE_MOTION && !MPG_DRY_RUN" in cancel_path, \
+       "realtime jog cancel must be physically gated by motion-enabled mode"
+assert "mpg_motion_output_cancel" in cancel_path
+assert "uart_write_bytes" not in cancel_path, \
+       "cancel must pass through the mode gate before UART output"
 
 watchdog_start = source.index("static void mpg_watchdog_task(")
 watchdog_end = source.index("\n}\n", watchdog_start) + 3
@@ -36,4 +44,9 @@ release = watchdog.index("serial_uart_mpg_release()")
 lock_give = watchdog.index("xSemaphoreGive(mpg_mutex)")
 assert lock_take < revoke < cancel < release < lock_give, \
        "TCP takeover must cancel and relinquish MPG ownership under one mutex"
+assert "bool lease_ended = false;" in watchdog
+assert "if (lease_ended)" in watchdog
+assert watchdog.index("if (lease_ended)") < watchdog.index(
+    "if (cancel_result == MPG_OUTPUT_SENT)"), \
+    "watchdog cancellation logs must be emitted only when a lease ends"
 print("v1 and legacy UART_COMMAND fail-closed regressions passed")

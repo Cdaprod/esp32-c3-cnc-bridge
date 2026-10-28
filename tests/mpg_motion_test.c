@@ -6,6 +6,8 @@
 
 typedef struct {
     unsigned uart_calls;
+    unsigned cancel_calls;
+    uint8_t cancel_byte;
     unsigned log_calls;
     bool log_success;
     char logged[64];
@@ -17,6 +19,14 @@ static int probe_uart(const char *command, size_t length, void *context)
     (void)command;
     probe->uart_calls++;
     return (int)length;
+}
+
+static int probe_cancel(uint8_t command, void *context)
+{
+    output_probe_t *probe = context;
+    probe->cancel_calls++;
+    probe->cancel_byte = command;
+    return 1;
 }
 
 static bool probe_logger(const char *command, void *context)
@@ -107,6 +117,17 @@ int main(void)
     assert(mpg_motion_output_command(cmd, false, probe_uart, probe_logger,
                                      &probe) == MPG_OUTPUT_SENT);
     assert(probe.uart_calls == 1);
+
+    /* Disarmed/dry-run leases must never inject realtime bytes into GRBL. */
+    assert(mpg_motion_output_cancel(false, probe_cancel, &probe) ==
+           MPG_OUTPUT_SUPPRESSED);
+    assert(probe.cancel_calls == 0);
+    assert(mpg_motion_output_cancel(true, probe_cancel, &probe) ==
+           MPG_OUTPUT_SENT);
+    assert(probe.cancel_calls == 1 && probe.cancel_byte == 0x85);
+    assert(mpg_motion_output_cancel(true, NULL, &probe) ==
+           MPG_OUTPUT_FAILED);
+    assert(probe.cancel_calls == 1);
     puts("mpg_motion tests passed");
     return 0;
 }
