@@ -19,6 +19,7 @@ tx_path = serial[tx_start:tx_end]
 assert "mpg_uart_arbiter_reserve_normal" in tx_path
 assert "mpg_uart_arbiter_complete_normal" in tx_path
 assert "if (!reserved)" in tx_path, "normal TX must fail closed while MPG owns UART"
+assert "event=uart_tx_rejected" in tx_path
 writer_start = source.index("static int mpg_uart_writer(")
 writer_end = source.index("static bool mpg_dry_run_logger(", writer_start)
 assert "serial_uart_mpg_owned()" in source[writer_start:writer_end], \

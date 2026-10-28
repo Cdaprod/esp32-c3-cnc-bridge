@@ -5,6 +5,7 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <driver/uart.h>
+#include <esp_timer.h>
 #include <esp_log.h>
 #include "serial_handler.h"
 #include "config.h"
@@ -18,6 +19,8 @@ static QueueHandle_t uart_espnow_queue = NULL;
 static QueueHandle_t uart_tx_queue = NULL;
 static mpg_uart_arbiter_t mpg_uart_arbiter;
 static portMUX_TYPE mpg_uart_arbiter_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t mpg_uart_rejections;
+static uint32_t mpg_uart_last_rejection_log_ms;
 
 bool serial_uart_tx_idle(void)
 {
@@ -170,7 +173,17 @@ void serial_send_data(const uint8_t *data, int length) {
     bool reserved = mpg_uart_arbiter_reserve_normal(&mpg_uart_arbiter);
     portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
     if (!reserved) {
-        ESP_LOGW(TAG, "UART command rejected: MPG lease owns controller");
+        const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+        mpg_uart_rejections++;
+        const uint32_t rejected = mpg_uart_rejections;
+        const bool report = mpg_uart_last_rejection_log_ms == 0 ||
+            (uint32_t)(now_ms - mpg_uart_last_rejection_log_ms) >= 1000;
+        if (report) mpg_uart_last_rejection_log_ms = now_ms;
+        portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+        if (report)
+            ESP_LOGW(TAG, "event=uart_tx_rejected reason=mpg_owns_controller "
+                     "bytes=%d total=%lu", length, (unsigned long)rejected);
         serial_free_data(tx_data);
         return;
     }
