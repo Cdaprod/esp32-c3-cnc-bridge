@@ -31,14 +31,14 @@
 #else
 #define MPG_ENABLE_MOTION 0
 #endif
-#if MPG_ENABLE_MOTION && defined(CONFIG_MPG_DRY_RUN)
+#if defined(CONFIG_MPG_DRY_RUN)
 #define MPG_DRY_RUN CONFIG_MPG_DRY_RUN
 #else
 /* Missing configuration is fail-closed: command output remains dry-run. */
 #define MPG_DRY_RUN 1
 #endif
 /* Configured using idf.py menuconfig, not firmware-source substitutions. */
-#if MPG_ENABLE_MOTION
+#if MPG_ENABLE_MOTION || MPG_DRY_RUN
 static uint8_t mpg_trusted_peer[6] = {0};
 static bool mpg_trusted_ready = false;
 static bool mpg_provision_peer(void)
@@ -759,7 +759,7 @@ static void espnow_rx_task(void *pvParameters)
                                     &duplicate_result, 1);
                 break;
             }
-#if MPG_ENABLE_MOTION
+#if MPG_ENABLE_MOTION || MPG_DRY_RUN
             /*
              * This path only works with a locally provisioned six-byte MAC,
              * a current GRBL Idle report and a live receiver motion lease.
@@ -1391,11 +1391,14 @@ void espnow_init_handler(void)
         esp_now_deinit();
         return;
     }
-#if MPG_ENABLE_MOTION
+#if MPG_ENABLE_MOTION || MPG_DRY_RUN
     mpg_trusted_ready = mpg_provision_peer();
     if (!mpg_trusted_ready) {
-        ESP_LOGE(TAG, "MPG motion disabled: trusted peer MAC not provisioned");
+        ESP_LOGW(TAG, "MPG diagnostics fail-closed: trusted peer MAC not provisioned");
     }
+    ESP_LOGI(TAG, "MPG mode=%s motion_enabled=%d",
+             MPG_DRY_RUN ? "DRY_RUN" : "UART",
+             MPG_ENABLE_MOTION ? 1 : 0);
 #endif
     espnow_rx_queue = xQueueCreate(ESPNOW_RX_QUEUE_SIZE,
                                     sizeof(espnow_rx_packet_t));

@@ -21,3 +21,8 @@ jobs:
         run: |
           . /opt/esp/idf/export.sh
           idf.py -D SDKCONFIG=sdkconfig.mpg-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-ci.defaults build
+      - name: Compile disarmed diagnostic dry-run configuration
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-dryrun-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-dryrun.defaults build
