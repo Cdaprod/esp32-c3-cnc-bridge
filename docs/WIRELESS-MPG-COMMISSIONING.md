@@ -6,10 +6,12 @@ Companion pendant implementation: [pendant PR #16](https://github.com/Cdaprod/lo
 - ESP-NOW v1 pairing and sequenced binary `MPG_JOG` / `MPG_STOP` with one-byte ACKs.
 - Dedicated 8-byte jog payload: ASCII X/Y/Z, deadman flag, signed int32 microns LE, uint16 feed mm/min LE.
 - GRBL 1.1 status query `?` every 250 ms, strict full-line parser, and <250 ms freshness gate before any jog.
-- Native C receiver ownership lease with replay rejection, 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`.
+- Native C receiver ownership lease with 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`. MPG sequence state is bound to the paired sender MAC and active session; duplicate and stale jog packets remain rejected after the lease is revoked or expires.
 - Unrestricted v1/legacy ESP-NOW raw UART forwarding disabled.
 - New radio peers receive framed UART_RESPONSE chunks; old clients continue receiving raw responses.
-- **Motion OFF by default** via ESP-IDF `CONFIG_MPG_ENABLE_MOTION=n`. A commissioning engineer can use `idf.py menuconfig` → **Wireless CNC MPG receiver** to explicitly enable experimental jogging and enter the approved unicast Wi-Fi MAC (`AA:BB:CC:DD:EE:FF`). Invalid/broadcast/multicast MACs deny motion. This is *not* permission to operate before physical commissioning, UART arbitration review and an independently functioning machine safety circuit.
+- **Motion OFF by default** via ESP-IDF `CONFIG_MPG_ENABLE_MOTION=n`. If motion admission is enabled for diagnostics, `CONFIG_MPG_DRY_RUN=y` is the default: production packet parsing, session/sequence checks, GRBL status admission and `$J` formatting run, then the proposed command is logged without calling the UART writer. A dry-run ACK confirms only that the intent passed those checks and was logged; no command reached GRBL. Host tests verify the dry-run path cannot fall through to UART when logging fails or is unavailable. Keep dry-run enabled for diagnostics. An explicitly authorized commissioning build may select `CONFIG_MPG_DRY_RUN=n`, but this does not authorize machine operation by itself.
+
+For a reproducible dry-run build, use `idf.py menuconfig` → **Wireless CNC MPG receiver**, enable `CONFIG_MPG_ENABLE_MOTION`, keep `CONFIG_MPG_DRY_RUN=y`, and enter the approved unicast Wi-Fi MAC (`AA:BB:CC:DD:EE:FF`). Invalid/broadcast/multicast MACs deny admission. This is *not* permission to operate before physical commissioning, UART arbitration review and an independently functioning machine safety circuit.
 
 ## Important limitations before activating physical movement
 1. ESP-NOW sender MAC allowlisting is not cryptographic authentication. Pairing by itself is insufficient. Provision keys / encrypted peers and an operator arming control for production.
@@ -23,6 +25,7 @@ Companion pendant implementation: [pendant PR #16](https://github.com/Cdaprod/lo
 
 ## Bench verification order
 - First run CI host unit tests and full ESP-IDF build with motion disabled.
+- Run the isolated host MPG tests with the CI dry-run configuration; confirm accepted/rejected intents and inspect the formatted command log while the fake UART writer remains untouched.
 - Flash C3 without attaching CNC motors; check serial boot and ESP-NOW channel.
 - Inspect paired radio session and confirm status reports are truly from a connected GRBL UART, not mere radio pairing.
 - Verify `MPG_JOG_ACK=ERROR` by default and test `MPG_STOP` UART 0x85 on a logic analyzer.
