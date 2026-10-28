@@ -79,6 +79,21 @@ def test_mpg_trace_matches_s3_submission_to_c3_proposal_by_session_and_sequence(
     asyncio.run(scenario())
 
 
+def test_successful_dry_run_admission_does_not_increment_device_errors(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "I (103) MPG: event=motion_admission result=accepted "
+                        "mode=dry_run session=3 seq=9",
+            })
+            app.drain_events()
+            assert app.errors["C3"] == 0
+            assert app.recent[-1].category == "dry-run"
+    asyncio.run(scenario())
+
+
 def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)

@@ -38,7 +38,17 @@ def test_lines_without_available_telemetry_are_generic():
 
 def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line("MPG DRY_RUN command=$J=G91X0.1F100") == "dry-run"
-    assert classify_line("W (101) MPG: event=motion_admission result=accepted seq=9") == "safety"
+    assert classify_line(
+        "I (101) MPG: event=motion_admission result=accepted "
+        "mode=dry_run session=3 seq=9") == "dry-run"
+    assert classify_line(
+        "I (102) MPG: event=motion_admission result=accepted "
+        "mode=uart session=3 seq=10") == "motion"
+    assert classify_line(
+        "W (103) MPG: event=motion_admission result=rejected "
+        "reason=deadman_released session=3 seq=11") == "safety"
+    assert classify_line(
+        "I (104) MPG: event=motion_admission result=accepted seq=12") == "safety"
     assert classify_line("I (102) GRBL: event=uart_tx operation=mpg_jog seq=9") == "controller"
 
 
