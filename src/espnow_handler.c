@@ -19,6 +19,7 @@
 #include "espnow_handler.h"
 #include "espnow_config.h"
 #include "espnow_protocol.h"
+#include "espnow_decode.h"
 #include "serial_handler.h"
 #include "tcp_server.h"
 #include "my_logs.h"
@@ -174,14 +175,7 @@ typedef struct {
     bool legacy_seq_valid;
 } espnow_peer_t;
 
-typedef struct {
-    uint8_t mac[6];
-    uint8_t type;
-    uint32_t session_id;
-    uint16_t seq;
-    uint16_t payload_len;
-    uint8_t payload[ESPNOW_MAX_PAYLOAD];
-} espnow_rx_packet_t;
+typedef espnow_decoded_packet_t espnow_rx_packet_t;
 
 typedef struct {
     uint8_t mac[6];
@@ -405,74 +399,10 @@ static bool build_packet(uint8_t type, uint32_t session_id, uint16_t seq,
     return true;
 }
 
-static bool new_type_is_valid(uint8_t type, uint16_t payload_len)
-{
-    switch (type) {
-    case ESPNOW_MSG_PAIR:
-        return payload_len >= 6 && payload_len <= 32;
-    case ESPNOW_MSG_PAIR_ACK:
-        return payload_len == ESPNOW_PAIR_ACK_PAYLOAD_LEN;
-    case ESPNOW_MSG_HEARTBEAT:
-        return payload_len == 0;
-    case ESPNOW_MSG_HEARTBEAT_ACK:
-        return payload_len == 0;
-    case ESPNOW_MSG_GPIO_COMMAND:
-        return payload_len == 2;
-    case ESPNOW_MSG_GPIO_ACK:
-        return payload_len == 3;
-    case ESPNOW_MSG_GPIO_STATUS:
-        return payload_len == 4;
-    case ESPNOW_MSG_GPIO_STATUS_REQ:
-        return payload_len == 0;
-    case ESPNOW_MSG_SENSOR_ASSIGNMENT:
-        return payload_len == 1;
-    case ESPNOW_MSG_MPG_JOG:
-        return payload_len == 8;
-    case ESPNOW_MSG_MPG_STOP:
-        return payload_len == 0;
-    case ESPNOW_MSG_MPG_JOG_ACK:
-    case ESPNOW_MSG_MPG_STOP_ACK:
-        return payload_len == 1;
-    case ESPNOW_MSG_UART_COMMAND:
-        return payload_len > 0;
-    case ESPNOW_MSG_UART_ACK:
-        return payload_len == 1;
-    case ESPNOW_MSG_UART_RESPONSE:
-        return payload_len > 0;
-    case ESPNOW_MSG_ERROR:
-        return payload_len > 0;
-    default:
-        return false;
-    }
-}
-
 static bool parse_packet(const uint8_t *data, int data_len,
                          espnow_rx_packet_t *out, const uint8_t *mac)
 {
-    if (!data || !out || !mac || data_len < ESPNOW_HEADER_SIZE ||
-        data[0] != ESPNOW_PROTOCOL_VERSION)
-        return false;
-
-    uint16_t payload_len = (uint16_t)data[8] | ((uint16_t)data[9] << 8);
-    if (payload_len > ESPNOW_MAX_PAYLOAD ||
-        payload_len != (uint16_t)(data_len - ESPNOW_HEADER_SIZE))
-        return false;
-
-    if (!new_type_is_valid(data[1], payload_len))
-        return false;
-
-    memset(out, 0, sizeof(*out));
-    memcpy(out->mac, mac, 6);
-    out->type = data[1];
-    out->session_id = (uint32_t)data[2] |
-                      ((uint32_t)data[3] << 8) |
-                      ((uint32_t)data[4] << 16) |
-                      ((uint32_t)data[5] << 24);
-    out->seq = (uint16_t)data[6] | ((uint16_t)data[7] << 8);
-    out->payload_len = payload_len;
-    if (payload_len)
-        memcpy(out->payload, data + ESPNOW_HEADER_SIZE, payload_len);
-    return true;
+    return espnow_decode_frame(data, data_len, mac, out);
 }
 
 static void send_simple_message(const uint8_t *mac, uint8_t type,
