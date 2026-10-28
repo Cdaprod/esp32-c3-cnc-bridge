@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import math
 import re
 import time
 from typing import Any
@@ -97,6 +98,56 @@ def extract_grbl_state(line: str) -> str | None:
     """Extract a state only from the C3's explicit validated status event."""
     match = re.search(r"event=grbl_status[^\n]*line=<([^|>]+)\|[^>]*>", line)
     return match.group(1) if match else None
+
+
+def extract_grbl_telemetry(line: str) -> dict[str, str] | None:
+    """Parse only finite values carried by an explicit C3 GRBL status event."""
+    match = re.search(r"\bevent=grbl_status\b[^\n]*\bline=(<[^>]*>)", line)
+    if not match:
+        return None
+    report = match.group(1)
+    parts = report[1:-1].split("|")
+    if not parts or not parts[0]:
+        return None
+    result = {"state": parts[0].split(":", 1)[0]}
+    axes = ("X", "Y", "Z", "A")
+    for field in parts[1:]:
+        if ":" not in field:
+            continue
+        name, value = field.split(":", 1)
+        if name in ("MPos", "WPos"):
+            raw_values = value.split(",")
+            if len(raw_values) not in (3, 4):
+                continue
+            try:
+                numbers = [float(item) for item in raw_values]
+            except ValueError:
+                continue
+            if not all(math.isfinite(item) for item in numbers):
+                continue
+            result[name.lower()] = " ".join(
+                f"{axis}={number:.3f}"
+                for axis, number in zip(axes, numbers)
+            )
+        elif name == "FS":
+            raw_values = value.split(",")
+            if len(raw_values) != 2:
+                continue
+            try:
+                feed, spindle = (float(item) for item in raw_values)
+            except ValueError:
+                continue
+            if math.isfinite(feed) and math.isfinite(spindle):
+                result["feed"] = f"{feed:.1f}"
+                result["spindle"] = f"{spindle:.1f}"
+        elif name == "F" and "feed" not in result:
+            try:
+                feed = float(value)
+            except ValueError:
+                continue
+            if math.isfinite(feed):
+                result["feed"] = f"{feed:.1f}"
+    return result
 
 
 def is_fresh(timestamp_ns: int | None, now_ns: int | None = None,

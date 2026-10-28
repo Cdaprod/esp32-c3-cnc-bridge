@@ -14,7 +14,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
 
 from .devices import choose_device, discover_devices
-from .events import Event, extract_grbl_state, is_fresh
+from .events import Event, extract_grbl_state, extract_grbl_telemetry, is_fresh
 from .recording import Recorder
 from .serial_reader import SerialReader
 
@@ -23,7 +23,7 @@ class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     CSS = """
     Screen { layout: vertical; }
-    #status { height: 2; padding: 0 1; }
+    #status { height: 3; padding: 0 1; }
     #panels { height: 1fr; }
     .panel { width: 1fr; border: round $accent; }
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
@@ -58,6 +58,7 @@ class ConsoleApp(App):
         self.radio_log_lines = {"S3": 0, "C3": 0}
         self.grbl_status: str | None = None
         self.grbl_status_host_ns: int | None = None
+        self.grbl_telemetry: dict[str, str] | None = None
         self.s3_input_status: tuple[str, str, str, str, str, str, str] | None = None
         self.s3_input_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
@@ -138,11 +139,27 @@ class ConsoleApp(App):
                 input_status = (f"{backend}/{inputs}/{selectors} axis={axis} "
                                 f"selector={position} "
                                 f"step={increment} deadman={deadman}")
+        telemetry_status = "unreported"
+        if self.grbl_status_host_ns is not None:
+            if not is_fresh(self.grbl_status_host_ns, time.monotonic_ns()):
+                telemetry_status = "stale"
+            elif self.grbl_telemetry:
+                fields = []
+                if "mpos" in self.grbl_telemetry:
+                    fields.append("MPos " + self.grbl_telemetry["mpos"])
+                if "wpos" in self.grbl_telemetry:
+                    fields.append("WPos " + self.grbl_telemetry["wpos"])
+                if "feed" in self.grbl_telemetry:
+                    fields.append("F=" + self.grbl_telemetry["feed"])
+                if "spindle" in self.grbl_telemetry:
+                    fields.append("S=" + self.grbl_telemetry["spindle"])
+                telemetry_status = " | ".join(fields) if fields else "no position/feed fields"
         self.query_one("#status", Static).update(
             f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
             f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
             f"Radio S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
-            f"Inputs {input_status}    GRBL {grbl_state} (from C3 status log only)")
+            f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
+            f"Machine telemetry {telemetry_status}")
 
     def drain_events(self) -> None:
         while True:
@@ -199,10 +216,12 @@ class ConsoleApp(App):
                     self.radio_log_lines[role] += 1
                 elif event.category in ("error", "safety"):
                     self.errors[role] += 1
-                status = extract_grbl_state(item["line"])
-                if status:
-                    self.grbl_status = status
-                    self.grbl_status_host_ns = event.host_monotonic_ns
+                if role == "C3":
+                    status = extract_grbl_state(item["line"])
+                    if status:
+                        self.grbl_status = status
+                        self.grbl_status_host_ns = event.host_monotonic_ns
+                        self.grbl_telemetry = extract_grbl_telemetry(item["line"])
                 self._add_event(event)
 
     def _add_event(self, event: Event) -> None:

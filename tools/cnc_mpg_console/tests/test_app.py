@@ -14,6 +14,15 @@ def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
             })
             await pilot.pause(0.12)
             assert app.grbl_status == "Idle"
+            app.refresh_status()
+            status = str(app.query_one("#status").render())
+            assert "GRBL Idle" in status
+            assert "Machine telemetry MPos X=0.000 Y=0.000 Z=0.000" in status
+            assert "F=0.0" in status and "S=0.0" in status
+            app.grbl_status_host_ns = time.monotonic_ns() - 2_000_000_000
+            app.refresh_status()
+            assert "Machine telemetry stale" in str(
+                app.query_one("#status").render())
             await pilot.click("#record")
             assert app.recorder is not None
             await pilot.click("#record")
