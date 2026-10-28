@@ -23,6 +23,22 @@ def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line("I (102) GRBL: event=uart_tx operation=mpg_jog seq=9") == "controller"
 
 
+def test_c3_dry_run_proposal_keeps_packet_identity_and_exact_command():
+    line = (
+        "I (103) MPG: event=dry_run result=proposed "
+        "mac=02:11:22:33:44:55 session=305419896 seq=256 axis=X "
+        "microns=-10 feed=250 command_hex=244a3d4739312047323120582d302e30313020463235300a"
+    )
+    event = Event.from_line("C3", line, monotonic_ns=987)
+    assert event.category == "dry-run"
+    assert event.fields["session"] == "305419896"
+    assert event.fields["seq"] == "256"
+    assert event.fields["axis"] == "X"
+    assert event.fields["microns"] == "-10"
+    assert event.fields["feed"] == "250"
+    assert bytes.fromhex(event.fields["command_hex"]).decode() == "$J=G91 G21 X-0.010 F250\n"
+
+
 def test_grbl_state_requires_explicit_status_event_and_expires():
     line = "I (100) GRBL: event=grbl_status source=uart0 age_ms=0 line=<Idle|MPos:0,0,0|FS:0,0>"
     assert extract_grbl_state(line) == "Idle"
