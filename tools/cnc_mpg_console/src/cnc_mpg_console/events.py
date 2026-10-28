@@ -69,7 +69,8 @@ class Event:
 def classify_line(line: str) -> str:
     """Classify only what a log line says; never infer missing device telemetry."""
     text = line.lower()
-    if ("event=motion_admission" in text or "event=input_rejected" in text or
+    if ("event=uart_tx_rejected" in text or
+            "event=motion_admission" in text or "event=input_rejected" in text or
             "event=encoder_overrun" in text or
             ("event=input_validity" in text and "valid=false" in text)):
         return "safety"

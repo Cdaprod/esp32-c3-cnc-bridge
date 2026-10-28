@@ -40,6 +40,16 @@ def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line("I (102) GRBL: event=uart_tx operation=mpg_jog seq=9") == "controller"
 
 
+def test_controller_uart_ownership_rejection_is_visible_as_safety_event():
+    event = Event.from_line(
+        "C3", "W (105) SERIAL_HANDLER: event=uart_tx_rejected "
+        "reason=mpg_owns_controller bytes=12 total=3", monotonic_ns=989)
+    assert event.category == "safety"
+    assert event.fields["reason"] == "mpg_owns_controller"
+    assert event.fields["bytes"] == "12"
+    assert event.fields["total"] == "3"
+
+
 def test_c3_dry_run_proposal_keeps_packet_identity_and_exact_command():
     line = (
         "I (103) MPG: event=dry_run result=proposed "
