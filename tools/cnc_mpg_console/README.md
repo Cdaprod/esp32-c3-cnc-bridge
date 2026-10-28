@@ -17,7 +17,7 @@ Use the port paths reported by `--list-devices`. Automatic discovery selects a r
 
 The S3 stream is passive by default. `--enable-s3-repl` reveals an input line that sends Python only to the selected S3 REPL. This can interrupt CircuitPython application execution; it is disabled unless explicitly requested. The dashboard never writes to the C3 stream and contains no GRBL command sender. It does not issue motion, spindle, status-query, or realtime bytes to the physical controller.
 
-Controls: `Record` starts a JSONL session, `Pause` pauses panel rendering while retaining events, `Filter` matches visible lines, `Export JSONL` exports the recent event cache, and `Reconnect` closes/reopens the existing readers. The C3 log parser classifies observed text; it does not claim an event or machine state unless the firmware printed it. Host timestamps are the common ordering reference; firmware timestamps, session IDs, peers, and sequence numbers are preserved when present.
+Controls: `Record` starts a JSONL session, `Pause` pauses panel rendering while retaining events, `Filter` matches visible lines, `Export JSONL` exports the recent event cache, and `Reconnect` closes/reopens the existing readers. The C3 log parser classifies observed text; it does not claim an event or machine state unless the firmware printed it. Host timestamps are the common ordering reference; firmware timestamps, session IDs, peers, and sequence numbers are preserved when present. For MPG traffic, the timeline annotates events with normalized `session/seq` when both are present. Its trace summary counts S3 driver-accepted submissions, C3 dry-run proposals, and exact identity matches even when USB readers deliver the lines in opposite order. A match proves the same identity appeared in both logs; it does not turn the S3 driver's send result into an OTA acknowledgment or imply that GRBL executed a command.
 
 ## C3 console and controller UART
 
@@ -36,4 +36,4 @@ python -m pip install -e '.[test]'
 python -m pytest
 ```
 
-Tests cover observed-line classification, identity ambiguity, passive serial receive, event correlation from both devices, reconnection, JSONL recording/export, and prevention of C3 REPL writes. They do not validate physical input movement, ESP-NOW over the air, GRBL telemetry on the current image, or console routing in an already flashed firmware image.
+Tests cover observed-line classification, session/sequence normalization and cross-device MPG correlation, identity ambiguity, passive serial receive, reconnection, JSONL recording/export, and prevention of C3 REPL writes. They do not validate physical input movement, ESP-NOW over the air, GRBL telemetry on the current image, or console routing in an already flashed firmware image.

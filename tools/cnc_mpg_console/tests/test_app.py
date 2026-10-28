@@ -43,3 +43,27 @@ def test_dashboard_correlates_observed_events_from_both_devices(tmp_path):
             assert c3_event.fields["session"] == "22"
             assert c3_event.host_monotonic_ns == 102
     asyncio.run(scenario())
+
+
+def test_mpg_trace_matches_s3_submission_to_c3_proposal_by_session_and_sequence(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            # Deliberately deliver C3 first to prove correlation does not rely
+            # on USB arrival order and never treats a TX call as OTA delivery.
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "I (104) MPG: event=dry_run result=proposed session=0x7b seq=0x11 axis=A",
+                "host_monotonic_ns": 102,
+            })
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=espnow_tx packet_type=mpg_jog session=123 seq=17 result=driver_accepted_not_ota_ack",
+                "host_monotonic_ns": 101,
+            })
+            await pilot.pause(0.12)
+            assert app.mpg_s3_submissions == 1
+            assert app.mpg_c3_proposals == 1
+            assert app.mpg_matched == 1
+            assert "matched session/seq=1" in str(app.query_one("#mpg-trace").render())
+    asyncio.run(scenario())

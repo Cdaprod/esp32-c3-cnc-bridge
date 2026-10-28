@@ -34,8 +34,36 @@ class Event:
                    host_monotonic_ns=mono, host_time=now.isoformat(timespec="milliseconds"),
                    fields=fields)
 
+    @property
+    def correlation_key(self) -> str | None:
+        """Normalize a packet identity only when both fields are observed."""
+        session = self.fields.get("session")
+        sequence = self.fields.get("seq")
+        if session is None or sequence is None:
+            return None
+        try:
+            session_number = int(session, 0)
+        except ValueError:
+            try:
+                session_number = int(session, 10)
+            except ValueError:
+                return None
+        try:
+            sequence_number = int(sequence, 0)
+        except ValueError:
+            try:
+                sequence_number = int(sequence, 10)
+            except ValueError:
+                return None
+        if not (1 <= session_number <= 0xFFFFFFFF and
+                0 <= sequence_number <= 0xFFFF):
+            return None
+        return f"{session_number}:{sequence_number}"
+
     def to_json(self) -> dict[str, Any]:
-        return asdict(self)
+        result = asdict(self)
+        result["correlation_key"] = self.correlation_key
+        return result
 
 
 def classify_line(line: str) -> str:

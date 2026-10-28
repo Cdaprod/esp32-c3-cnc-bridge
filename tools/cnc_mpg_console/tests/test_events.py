@@ -76,3 +76,16 @@ def test_grbl_state_requires_explicit_status_event_and_expires():
     assert extract_grbl_state("controller paired") is None
     assert is_fresh(1_000, 1_500, max_age_ns=500)
     assert not is_fresh(1_000, 1_501, max_age_ns=500)
+
+
+def test_correlation_key_normalizes_packet_identity_and_rejects_incomplete_fields():
+    decimal = Event.from_line(
+        "S3", "event=espnow_tx session=123 seq=17", monotonic_ns=1)
+    hexadecimal = Event.from_line(
+        "C3", "event=dry_run session=0x7b seq=0x11", monotonic_ns=2)
+    incomplete = Event.from_line(
+        "C3", "event=dry_run session=123", monotonic_ns=3)
+    assert decimal.correlation_key == "123:17"
+    assert hexadecimal.correlation_key == decimal.correlation_key
+    assert decimal.to_json()["correlation_key"] == "123:17"
+    assert incomplete.correlation_key is None

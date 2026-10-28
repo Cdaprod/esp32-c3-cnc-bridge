@@ -29,6 +29,7 @@ class ConsoleApp(App):
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
     RichLog { height: 1fr; scrollbar-size: 1 1; }
     #timeline-title { height: 1; text-style: bold; padding: 0 1; }
+    #mpg-trace { height: 1; padding: 0 1; color: $text-muted; }
     #timeline { height: 12; border: round $secondary; }
     #controls { height: 3; }
     #filter { width: 1fr; }
@@ -59,6 +60,11 @@ class ConsoleApp(App):
         self.grbl_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
+        self.mpg_s3_submissions = 0
+        self.mpg_c3_proposals = 0
+        self.mpg_matched = 0
+        self._mpg_correlations: dict[str, int] = {}
+        self._mpg_correlation_order: deque[str] = deque()
         self.filter_text = ""
         self.paused = False
         self.recorder: Recorder | None = None
@@ -77,6 +83,7 @@ class ConsoleApp(App):
                 yield Static("ESP32-C3 BRIDGE · PASSIVE", classes="panel-title")
                 yield RichLog(id="c3-log", wrap=True, markup=False, highlight=True, max_lines=2000)
         yield Static("CORRELATED EVENT TIMELINE", id="timeline-title")
+        yield Static("MPG observed: S3 submissions=0 | C3 dry-run proposals=0 | matched session/seq=0", id="mpg-trace")
         yield RichLog(id="timeline", wrap=True, markup=False, highlight=True, max_lines=2000)
         with Horizontal(id="controls"):
             yield Button("Record", id="record")
@@ -160,6 +167,7 @@ class ConsoleApp(App):
                 self._add_event(event)
 
     def _add_event(self, event: Event) -> None:
+        self._track_mpg_correlation(event)
         self.recent.append(event)
         if self.recorder:
             self.recorder.write(event)
@@ -168,15 +176,46 @@ class ConsoleApp(App):
             return
         self._render_event(event)
 
+    def _track_mpg_correlation(self, event: Event) -> None:
+        event_type = event.fields.get("event")
+        bit = 0
+        if (event.source == "S3" and event_type == "espnow_tx" and
+                event.fields.get("packet_type") == "mpg_jog"):
+            self.mpg_s3_submissions += 1
+            bit = 1
+        elif (event.source == "C3" and event_type == "dry_run" and
+              event.fields.get("result") == "proposed"):
+            self.mpg_c3_proposals += 1
+            bit = 2
+        key = event.correlation_key
+        if bit and key is not None:
+            old = self._mpg_correlations.get(key, 0)
+            if not old:
+                if len(self._mpg_correlation_order) >= 2000:
+                    expired = self._mpg_correlation_order.popleft()
+                    self._mpg_correlations.pop(expired, None)
+                self._mpg_correlation_order.append(key)
+            new = old | bit
+            self._mpg_correlations[key] = new
+            if old != 3 and new == 3:
+                self.mpg_matched += 1
+        self.query_one("#mpg-trace", Static).update(
+            "MPG observed: S3 submissions={} | C3 dry-run proposals={} | "
+            "matched session/seq={}".format(
+                self.mpg_s3_submissions, self.mpg_c3_proposals,
+                self.mpg_matched))
+
     def _render_event(self, event: Event) -> None:
         term = self.filter_text
         if term and term not in event.message.lower() and term not in event.category.lower():
             return
+        identity = (f" [session/seq {event.correlation_key}]"
+                    if event.correlation_key else "")
         if event.source in ("S3", "C3"):
             self.query_one(f"#{event.source.lower()}-log", RichLog).write(
-                f"{event.host_time} {event.category.upper():<10} {event.message}")
+                f"{event.host_time} {event.category.upper():<10}{identity} {event.message}")
         self.query_one("#timeline", RichLog).write(
-            f"{event.host_time} {event.source:<2} {event.category.upper():<10} {event.message}")
+            f"{event.host_time} {event.source:<2} {event.category.upper():<10}{identity} {event.message}")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter":
