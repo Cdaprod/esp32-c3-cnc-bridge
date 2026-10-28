@@ -37,7 +37,10 @@ int main(void)
     char cmd[64] = {0};
     assert(mpg_motion_format_jog(cmd, sizeof(cmd), 'X', -10, 250));
     assert(strcmp(cmd, "$J=G91 G21 X-0.010 F250\n") == 0);
+    assert(mpg_motion_format_jog(cmd, sizeof(cmd), 'A', 10, 250));
+    assert(strcmp(cmd, "$J=G91 G21 A0.010 F250\n") == 0);
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'Q', 10, 250));
+    assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'B', 10, 250));
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'X', 1001, 250));
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'X', 10, 0));
     assert(mpg_motion_admit(&lease, a, 123, 65535, true, true, true, 1000, 250) == MPG_MOTION_OK);

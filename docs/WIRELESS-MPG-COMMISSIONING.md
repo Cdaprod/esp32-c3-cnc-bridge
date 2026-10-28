@@ -1,10 +1,10 @@
 # Wireless MPG commissioning (ESP32-C3 receiver)
 
-Companion pendant implementation: [pendant PR #16](https://github.com/Cdaprod/lolin-s2-mini-cnc-mpg-pendant-controller/pull/16).
+Companion pendant implementation: [pendant PR #22](https://github.com/Cdaprod/lolin-s2-mini-cnc-mpg-pendant-controller/pull/22).
 
 ## What is implemented
 - ESP-NOW v1 pairing and sequenced binary `MPG_JOG` / `MPG_STOP` with one-byte ACKs.
-- Dedicated 8-byte jog payload: ASCII X/Y/Z, deadman flag, signed int32 microns LE, uint16 feed mm/min LE.
+- Dedicated 8-byte jog payload: ASCII X/Y/Z/A, deadman flag, signed int32 microns LE, uint16 feed mm/min LE. The S3 manufacturer map labels selector contact `4` as the 4th/A axis; positions `5` and `6` remain configured as UI functions on the current S3 profile.
 - GRBL 1.1 status query `?` every 250 ms, strict full-line parser, and <250 ms freshness gate before any jog.
 - Native C receiver ownership lease with 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`. MPG sequence state is bound to the paired sender MAC and active session; duplicate and stale jog packets remain rejected after the lease is revoked or expires.
 - Unrestricted v1/legacy ESP-NOW raw UART forwarding disabled.

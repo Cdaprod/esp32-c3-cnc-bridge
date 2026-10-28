@@ -47,6 +47,19 @@ int main(void)
         (char)packet.payload[0], (int32_t)microns_bits,
         (uint16_t)packet.payload[6] | ((uint16_t)packet.payload[7] << 8)));
     assert(strcmp(command, "$J=G91 G21 X-0.010 F250\n") == 0);
+    /* Existing v1 frame shape carries the manufacturer's fourth/A selector
+     * as an ASCII axis byte; no protocol version or payload change is needed. */
+    const uint8_t a_frame[] = {
+        0x01,0x30,0x78,0x56,0x34,0x12,0x01,0x01,0x08,0x00,
+        0x41,0x01,0x0a,0x00,0x00,0x00,0xfa,0x00
+    };
+    espnow_decoded_packet_t fourth_axis_packet;
+    assert(espnow_decode_frame(a_frame, sizeof(a_frame), peer,
+                               &fourth_axis_packet));
+    assert(fourth_axis_packet.payload[0] == 'A');
+    assert(mpg_motion_format_jog(command, sizeof(command),
+        (char)fourth_axis_packet.payload[0], 10, 250));
+    assert(strcmp(command, "$J=G91 G21 A0.010 F250\n") == 0);
 
     /* Exercise the same trust/deadman/fresh-status/session-sequence gate used
      * by the receiver before the production dry-run output seam. */

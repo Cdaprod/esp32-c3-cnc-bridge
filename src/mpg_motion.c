@@ -92,7 +92,7 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
     char axis, int32_t distance_microns, uint16_t feed_mm_min)
 {
     if (!output || capacity < 48 ||
-        !(axis == 'X' || axis == 'Y' || axis == 'Z') ||
+        !(axis == 'X' || axis == 'Y' || axis == 'Z' || axis == 'A') ||
         distance_microns == 0 || distance_microns < -1000 ||
         distance_microns > 1000 ||
         feed_mm_min == 0 || feed_mm_min > 1000)
