@@ -25,7 +25,7 @@ class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     CSS = """
     Screen { layout: vertical; }
-    #status { height: 5; padding: 0 1; }
+    #status { height: 6; padding: 0 1; }
     #panels { height: 1fr; }
     .panel { width: 1fr; border: round $accent; }
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
@@ -68,6 +68,8 @@ class ConsoleApp(App):
         self.s3_input_status_host_ns: int | None = None
         self.s3_touch_status: tuple[str, str, str, str, str, str] | None = None
         self.s3_touch_status_host_ns: int | None = None
+        self.s3_loop_status: tuple[str, str] | None = None
+        self.s3_loop_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
         self.mpg_s3_submissions = 0
@@ -176,6 +178,14 @@ class ConsoleApp(App):
                 polls, active, reads, busy, irq_idle, errors = self.s3_touch_status
                 touch_status = (f"polls={polls} active={active} reads={reads} "
                                 f"bus-busy={busy} IRQ-idle={irq_idle} errors={errors}")
+        loop_status = "unreported"
+        if self.s3_loop_status_host_ns is not None:
+            if not is_fresh(self.s3_loop_status_host_ns, time.monotonic_ns(),
+                            max_age_ns=30_000_000_000):
+                loop_status = "stale"
+            else:
+                work_ms, overruns = self.s3_loop_status
+                loop_status = f"work={work_ms}ms overruns={overruns}/10s"
         radio_status = []
         now_ns = time.monotonic_ns()
         for role in ("S3", "C3"):
@@ -199,6 +209,7 @@ class ConsoleApp(App):
             f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
             f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
             f"Touch S3 {touch_status}\n"
+            f"S3 loop {loop_status}\n"
             f"Radio last observed: {' | '.join(radio_status)}\n"
             f"Machine telemetry {telemetry_status}")
 
@@ -270,6 +281,13 @@ class ConsoleApp(App):
                     self.s3_touch_status = tuple(
                         event.fields[field] for field in touch_fields)
                     self.s3_touch_status_host_ns = event.host_monotonic_ns
+                loop_fields = ("loop_work_ms", "loop_overruns")
+                if role == "S3" and event.fields.get("event") == "runtime" and all(
+                        field in event.fields and event.fields[field].isdigit()
+                        for field in loop_fields):
+                    self.s3_loop_status = tuple(event.fields[field]
+                                                for field in loop_fields)
+                    self.s3_loop_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
                     self.radio_log_lines[role] += 1
                 elif event.category in ("error", "safety"):

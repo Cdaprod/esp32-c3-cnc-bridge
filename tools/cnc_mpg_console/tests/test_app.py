@@ -235,6 +235,28 @@ def test_s3_touch_diagnostics_are_summarized_and_expire(tmp_path):
     asyncio.run(scenario())
 
 
+def test_s3_loop_work_and_overruns_are_summarized_and_expire(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=runtime loop_work_ms=3 loop_overruns=2",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.drain_events()
+            app.refresh_status()
+            assert app.s3_loop_status == ("3", "2")
+            assert "S3 loop work=3ms overruns=2/10s" in str(
+                app.query_one("#status").render())
+
+            app.s3_loop_status_host_ns = time.monotonic_ns() - 31_000_000_000
+            app.refresh_status()
+            assert "S3 loop stale" in str(app.query_one("#status").render())
+
+    asyncio.run(scenario())
+
+
 def test_serial_burst_renders_in_widget_batches_and_bounds_each_drain(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
