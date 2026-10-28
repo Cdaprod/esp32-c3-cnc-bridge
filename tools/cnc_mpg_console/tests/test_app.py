@@ -77,8 +77,8 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
             app.bus.put_nowait({
                 "kind": "line", "source": "C3",
                 "line": "event=runtime input_backend=configured "
-                        "input_validity=valid selector_validity=valid "
-                        "axis=X increment=X10 deadman=active",
+                        "input_validity=valid selector_validity=valid axis=X "
+                        "selector_position=X increment=X10 deadman=active",
                 "host_monotonic_ns": time.monotonic_ns(),
             })
             app.drain_events()
@@ -89,29 +89,31 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
                 "kind": "line", "source": "S3",
                 "line": "[event] event=runtime input_backend=disabled "
                         "input_validity=unknown selector_validity=unknown "
-                        "axis=unknown increment=unknown deadman=unknown",
+                        "axis=unknown selector_position=unknown "
+                        "increment=unknown deadman=unknown",
                 "host_monotonic_ns": observed_at,
             })
             app.drain_events()
             app.refresh_status()
             assert app.s3_input_status == (
-                "disabled", "unknown", "unknown", "unknown", "unknown", "unknown")
-            assert "Inputs disabled/unknown/unknown axis=unknown step=unknown deadman=unknown" in str(
+                "disabled", "unknown", "unknown", "unknown", "unknown",
+                "unknown", "unknown")
+            assert "Inputs disabled/unknown/unknown axis=unknown selector=unknown step=unknown deadman=unknown" in str(
                 app.query_one("#status").render())
 
             observed_at = time.monotonic_ns()
             app.bus.put_nowait({
                 "kind": "line", "source": "S3",
                 "line": "[event] event=runtime input_backend=configured "
-                        "input_validity=valid selector_validity=valid "
-                        "axis=X increment=X10 deadman=active",
+                        "input_validity=valid selector_validity=valid axis=A "
+                        "selector_position=4 increment=X10 deadman=active",
                 "host_monotonic_ns": observed_at,
             })
             app.drain_events()
             app.refresh_status()
             assert app.s3_input_status == (
-                "configured", "valid", "valid", "X", "X10", "active")
-            assert "Inputs configured/valid/valid axis=X step=X10 deadman=active" in str(
+                "configured", "valid", "valid", "A", "4", "X10", "active")
+            assert "Inputs configured/valid/valid axis=A selector=4 step=X10 deadman=active" in str(
                 app.query_one("#status").render())
 
             app.s3_input_status_host_ns = time.monotonic_ns() - 31_000_000_000

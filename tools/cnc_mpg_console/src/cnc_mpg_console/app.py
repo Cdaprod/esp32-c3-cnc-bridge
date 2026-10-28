@@ -58,7 +58,7 @@ class ConsoleApp(App):
         self.radio_log_lines = {"S3": 0, "C3": 0}
         self.grbl_status: str | None = None
         self.grbl_status_host_ns: int | None = None
-        self.s3_input_status: tuple[str, str, str, str, str, str] | None = None
+        self.s3_input_status: tuple[str, str, str, str, str, str, str] | None = None
         self.s3_input_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
@@ -134,8 +134,9 @@ class ConsoleApp(App):
                             time.monotonic_ns(), max_age_ns=30_000_000_000):
                 input_status = "stale"
             else:
-                backend, inputs, selectors, axis, increment, deadman = self.s3_input_status
+                backend, inputs, selectors, axis, position, increment, deadman = self.s3_input_status
                 input_status = (f"{backend}/{inputs}/{selectors} axis={axis} "
+                                f"selector={position} "
                                 f"step={increment} deadman={deadman}")
         self.query_one("#status", Static).update(
             f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
@@ -174,6 +175,9 @@ class ConsoleApp(App):
                         event.fields.get("selector_validity") in
                         ("unknown", "valid", "invalid") and
                         event.fields.get("axis") in
+                        ("OFF", "X", "Y", "Z", "A", "invalid",
+                         "unknown", "unavailable") and
+                        event.fields.get("selector_position") in
                         ("OFF", "X", "Y", "Z", "4", "5", "6", "invalid",
                          "unknown", "unavailable") and
                         event.fields.get("increment") in
@@ -186,6 +190,7 @@ class ConsoleApp(App):
                         event.fields["input_validity"],
                         event.fields["selector_validity"],
                         event.fields["axis"],
+                        event.fields["selector_position"],
                         event.fields["increment"],
                         event.fields["deadman"],
                     )
