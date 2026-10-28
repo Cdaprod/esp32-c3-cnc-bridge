@@ -1,7 +1,9 @@
 import asyncio
 import time
+from unittest.mock import patch
 
 from cnc_mpg_console.app import ConsoleApp
+from textual.widgets import RichLog
 
 
 def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
@@ -91,6 +93,33 @@ def test_successful_dry_run_admission_does_not_increment_device_errors(tmp_path)
             app.drain_events()
             assert app.errors["C3"] == 0
             assert app.recent[-1].category == "dry-run"
+    asyncio.run(scenario())
+
+
+def test_dry_run_panel_shows_verified_proposed_grbl_command(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        rendered = []
+        original_write = RichLog.write
+
+        def capture_write(widget, renderable, *args, **kwargs):
+            rendered.append(str(renderable))
+            return original_write(widget, renderable, *args, **kwargs)
+
+        proposal = (
+            "I (103) MPG: event=dry_run result=proposed mac=02:11:22:33:44:55 "
+            "session=123 seq=17 axis=X microns=-10 feed=250 "
+            "command_hex=244a3d4739312047323120582d302e30313020463235300a"
+        )
+        with patch.object(RichLog, "write", capture_write):
+            async with app.run_test(size=(120, 40)) as pilot:
+                app.bus.put_nowait({
+                    "kind": "line", "source": "C3", "line": proposal,
+                })
+                await pilot.pause(0.12)
+        assert any("proposed GRBL (dry-run): $J=G91 G21 X-0.010 F250" in line
+                   for line in rendered)
+
     asyncio.run(scenario())
 
 

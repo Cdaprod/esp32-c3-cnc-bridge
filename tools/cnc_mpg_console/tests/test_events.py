@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from cnc_mpg_console.events import (
     Event, classify_line, extract_grbl_state, extract_grbl_telemetry, is_fresh,
+    proposed_dry_run_command,
 )
 
 
@@ -88,6 +89,7 @@ def test_c3_dry_run_proposal_keeps_packet_identity_and_exact_command():
     assert event.fields["microns"] == "-10"
     assert event.fields["feed"] == "250"
     assert bytes.fromhex(event.fields["command_hex"]).decode() == "$J=G91 G21 X-0.010 F250\n"
+    assert proposed_dry_run_command(event) == "$J=G91 G21 X-0.010 F250"
 
 
 def test_c3_a_axis_dry_run_is_observed_proposal_not_uart_delivery():
@@ -102,6 +104,28 @@ def test_c3_a_axis_dry_run_is_observed_proposal_not_uart_delivery():
     assert (event.fields["session"], event.fields["seq"]) == (
         "305419896", "257")
     assert bytes.fromhex(event.fields["command_hex"]).decode() == "$J=G91 G21 A0.010 F500\n"
+    assert proposed_dry_run_command(event) == "$J=G91 G21 A0.010 F500"
+
+
+def test_dry_run_display_decoder_rejects_mismatched_or_nonproposal_payloads():
+    fields = (
+        "event=dry_run result=proposed session=1 seq=2 axis=X microns=10 "
+        "feed=250 command_hex=244a3d473931204732312058302e30313020463235300a"
+    )
+    valid = Event.from_line("C3", "I (1) MPG: " + fields)
+    assert proposed_dry_run_command(valid) == "$J=G91 G21 X0.010 F250"
+
+    mismatch = Event.from_line("C3", "I (1) MPG: " + fields.replace(
+        "microns=10", "microns=20"))
+    assert proposed_dry_run_command(mismatch) is None
+    accepted = Event.from_line("C3", "I (1) MPG: " + fields.replace(
+        "result=proposed", "result=accepted"))
+    assert proposed_dry_run_command(accepted) is None
+    spaced_hex = Event.from_line("C3", "I (1) MPG: " + fields.replace(
+        "command_hex=244a", "command_hex=24 4a"))
+    assert proposed_dry_run_command(spaced_hex) is None
+    wrong_source = Event.from_line("S3", "I (1) MPG: " + fields)
+    assert proposed_dry_run_command(wrong_source) is None
 
 
 def test_grbl_state_requires_explicit_status_event_and_expires():

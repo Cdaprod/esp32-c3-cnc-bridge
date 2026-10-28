@@ -14,7 +14,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
 
 from .devices import choose_device, discover_devices
-from .events import Event, extract_grbl_state, extract_grbl_telemetry, is_fresh
+from .events import (Event, extract_grbl_state, extract_grbl_telemetry,
+                     is_fresh, proposed_dry_run_command)
 from .recording import Recorder
 from .serial_reader import SerialReader
 
@@ -265,15 +266,19 @@ class ConsoleApp(App):
 
     def _render_event(self, event: Event) -> None:
         term = self.filter_text
-        if term and term not in event.message.lower() and term not in event.category.lower():
+        command = proposed_dry_run_command(event)
+        proposal = (f" | proposed GRBL (dry-run): {command}"
+                    if command is not None else "")
+        searchable = event.message.lower() + proposal.lower()
+        if term and term not in searchable and term not in event.category.lower():
             return
         identity = (f" [session/seq {event.correlation_key}]"
                     if event.correlation_key else "")
         if event.source in ("S3", "C3"):
             self.query_one(f"#{event.source.lower()}-log", RichLog).write(
-                f"{event.host_time} {event.category.upper():<10}{identity} {event.message}")
+                f"{event.host_time} {event.category.upper():<10}{identity} {event.message}{proposal}")
         self.query_one("#timeline", RichLog).write(
-            f"{event.host_time} {event.source:<2} {event.category.upper():<10}{identity} {event.message}")
+            f"{event.host_time} {event.source:<2} {event.category.upper():<10}{identity} {event.message}{proposal}")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter":

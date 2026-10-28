@@ -159,6 +159,42 @@ def extract_grbl_telemetry(line: str) -> dict[str, str] | None:
     return result
 
 
+def proposed_dry_run_command(event: Event) -> str | None:
+    """Decode a C3 proposal for display after checking its observed metadata.
+
+    This is deliberately limited to the production dry-run event shape. The
+    returned string is presentation data only; this module has no transport.
+    """
+    fields = event.fields
+    if (event.source != "C3" or fields.get("event") != "dry_run" or
+            fields.get("result") != "proposed"):
+        return None
+    try:
+        axis = fields["axis"]
+        microns = int(fields["microns"], 10)
+        feed = int(fields["feed"], 10)
+        encoded = fields["command_hex"]
+    except (KeyError, ValueError):
+        return None
+    if (axis not in ("X", "Y", "Z", "A") or
+            not 1 <= abs(microns) <= 1000 or not 1 <= feed <= 1000 or
+            len(encoded) > 128 or
+            re.fullmatch(r"(?:[0-9a-fA-F]{2})+", encoded) is None):
+        return None
+    try:
+        raw = bytes.fromhex(encoded)
+    except ValueError:
+        return None
+    sign = "-" if microns < 0 else ""
+    magnitude = abs(microns)
+    expected = ("$J=G91 G21 {}{}{}.{:03d} F{}\n".format(
+        axis, sign, magnitude // 1000, magnitude % 1000, feed
+    )).encode("ascii")
+    if raw != expected:
+        return None
+    return expected[:-1].decode("ascii")
+
+
 def is_fresh(timestamp_ns: int | None, now_ns: int | None = None,
              max_age_ns: int = 1_500_000_000) -> bool:
     if timestamp_ns is None:
