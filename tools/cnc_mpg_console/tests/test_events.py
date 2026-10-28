@@ -136,6 +136,32 @@ def test_grbl_state_requires_explicit_status_event_and_expires():
     assert not is_fresh(1_000, 1_501, max_age_ns=500)
 
 
+def test_radio_link_status_requires_explicit_device_transition():
+    from cnc_mpg_console.events import extract_radio_link_event
+
+    assert extract_radio_link_event(
+        "S3", "[event] event=espnow_link state=paired session=123 peer=aa") == {
+            "state": "paired", "session": "123",
+        }
+    assert extract_radio_link_event(
+        "S3", "[event] event=espnow_link state=lost reason=heartbeat_timeout") == {
+            "state": "lost",
+        }
+    assert extract_radio_link_event(
+        "C3", "I (123) ESPNOW: PAIR v2 accettato da aa:bb:cc:dd:ee:ff "
+              "session=0x0000007B") == {
+                  "state": "paired", "peer": "aa:bb:cc:dd:ee:ff",
+                  "session": "0x0000007B",
+              }
+    assert extract_radio_link_event(
+        "C3", "W (124) ESPNOW: Peer aa:bb:cc:dd:ee:ff rimosso per timeout") == {
+            "state": "lost", "peer": "aa:bb:cc:dd:ee:ff",
+            "reason": "timeout",
+        }
+    assert extract_radio_link_event("S3", "[espnow] paired=true") is None
+    assert extract_radio_link_event("C3", "WiFi connected") is None
+
+
 def test_grbl_telemetry_parses_only_finite_observed_fields():
     line = (
         "I (100) GRBL: event=grbl_status source=uart0 age_ms=0 "

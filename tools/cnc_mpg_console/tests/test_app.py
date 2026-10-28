@@ -57,6 +57,40 @@ def test_dashboard_correlates_observed_events_from_both_devices(tmp_path):
     asyncio.run(scenario())
 
 
+def test_dashboard_shows_last_observed_radio_transitions_without_claiming_live_link(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=espnow_link state=paired session=123 peer=aa",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "I (123) ESPNOW: PAIR v2 accettato da aa:bb:cc:dd:ee:ff "
+                        "session=0x0000007B",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            await pilot.pause(0.12)
+            app.refresh_status()
+            status = str(app.query_one("#status").render())
+            assert "S3 last=paired session=123 (0s ago)" in status
+            assert "C3 last=paired session=0x0000007B peer=aa:bb:cc:dd:ee:ff (0s ago)" in status
+            assert "Radio last observed" in status
+
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "W (124) ESPNOW: Peer aa:bb:cc:dd:ee:ff rimosso per timeout",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.drain_events()
+            app.refresh_status()
+            assert "C3 last=lost peer=aa:bb:cc:dd:ee:ff reason=timeout" in str(
+                app.query_one("#status").render())
+    asyncio.run(scenario())
+
+
 def test_mpg_trace_matches_s3_submission_to_c3_proposal_by_session_and_sequence(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)

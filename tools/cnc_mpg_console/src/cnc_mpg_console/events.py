@@ -159,6 +159,42 @@ def extract_grbl_telemetry(line: str) -> dict[str, str] | None:
     return result
 
 
+def extract_radio_link_event(source: str, line: str) -> dict[str, str] | None:
+    """Return only explicit pairing/loss transitions present in device logs.
+
+    The C3 currently logs pairing and timeout transitions in its native
+    ESP-IDF messages rather than the S3's structured event format. These are
+    historical observations, not a live-link assertion.
+    """
+    if source == "S3":
+        match = re.search(
+            r"\bevent=espnow_link\b[^\n]*\bstate=(paired|lost)\b"
+            r"(?:[^\n]*\bsession=([^\s]+))?",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            result = {"state": match.group(1).lower()}
+            if match.group(2):
+                result["session"] = match.group(2)
+            return result
+    elif source == "C3":
+        match = re.search(
+            r"\bPAIR v\d+ accettato da ([0-9A-Fa-f:]+)\s+session=(0x[0-9A-Fa-f]+)",
+            line,
+        )
+        if match:
+            return {"state": "paired", "peer": match.group(1),
+                    "session": match.group(2)}
+        match = re.search(
+            r"\bPeer ([0-9A-Fa-f:]+) rimosso per timeout\b", line
+        )
+        if match:
+            return {"state": "lost", "peer": match.group(1),
+                    "reason": "timeout"}
+    return None
+
+
 def proposed_dry_run_command(event: Event) -> str | None:
     """Decode a C3 proposal for display after checking its observed metadata.
 

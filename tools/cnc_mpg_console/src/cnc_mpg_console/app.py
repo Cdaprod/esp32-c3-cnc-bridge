@@ -15,7 +15,8 @@ from textual.widgets import Button, Footer, Header, Input, RichLog, Static
 
 from .devices import choose_device, discover_devices
 from .events import (Event, extract_grbl_state, extract_grbl_telemetry,
-                     is_fresh, proposed_dry_run_command)
+                     extract_radio_link_event, is_fresh,
+                     proposed_dry_run_command)
 from .recording import Recorder
 from .serial_reader import SerialReader
 
@@ -24,7 +25,7 @@ class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     CSS = """
     Screen { layout: vertical; }
-    #status { height: 3; padding: 0 1; }
+    #status { height: 4; padding: 0 1; }
     #panels { height: 1fr; }
     .panel { width: 1fr; border: round $accent; }
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
@@ -57,6 +58,9 @@ class ConsoleApp(App):
         self.counts = {"S3": 0, "C3": 0}
         self.errors = {"S3": 0, "C3": 0}
         self.radio_log_lines = {"S3": 0, "C3": 0}
+        self.radio_link_events: dict[str, tuple[dict[str, str], int] | None] = {
+            "S3": None, "C3": None,
+        }
         self.grbl_status: str | None = None
         self.grbl_status_host_ns: int | None = None
         self.grbl_telemetry: dict[str, str] | None = None
@@ -155,11 +159,29 @@ class ConsoleApp(App):
                 if "spindle" in self.grbl_telemetry:
                     fields.append("S=" + self.grbl_telemetry["spindle"])
                 telemetry_status = " | ".join(fields) if fields else "no position/feed fields"
+        radio_status = []
+        now_ns = time.monotonic_ns()
+        for role in ("S3", "C3"):
+            observed = self.radio_link_events[role]
+            if observed is None:
+                radio_status.append(f"{role}=unreported")
+                continue
+            fields, observed_ns = observed
+            age_s = max(0, now_ns - observed_ns) / 1_000_000_000
+            detail = fields["state"]
+            if "session" in fields:
+                detail += f" session={fields['session']}"
+            if "peer" in fields:
+                detail += f" peer={fields['peer']}"
+            if fields.get("reason"):
+                detail += f" reason={fields['reason']}"
+            radio_status.append(f"{role} last={detail} ({age_s:.0f}s ago)")
         self.query_one("#status", Static).update(
             f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
             f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
-            f"Radio S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
+            f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
             f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
+            f"Radio last observed: {' | '.join(radio_status)}\n"
             f"Machine telemetry {telemetry_status}")
 
     def drain_events(self) -> None:
@@ -186,6 +208,10 @@ class ConsoleApp(App):
                 self.counts[role] += 1
                 event = Event.from_line(role, item["line"],
                     monotonic_ns=item.get("host_monotonic_ns"), wall_time=item.get("host_time"))
+                link_event = extract_radio_link_event(role, item["line"])
+                if link_event:
+                    self.radio_link_events[role] = (
+                        link_event, event.host_monotonic_ns)
                 if (role == "S3" and event.fields.get("event") == "runtime" and
                         event.fields.get("input_backend") in ("disabled", "configured") and
                         event.fields.get("input_validity") in
