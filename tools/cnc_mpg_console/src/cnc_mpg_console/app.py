@@ -73,6 +73,12 @@ class ConsoleApp(App):
         self.mpg_matched = 0
         self._mpg_correlations: dict[str, int] = {}
         self._mpg_correlation_order: deque[str] = deque()
+        self._mpg_trace_dirty = False
+        self._rendering_batch = False
+        self._render_buffer: dict[str, list[str]] = {
+            "S3": [], "C3": [], "timeline": [],
+        }
+        self._filter_timer = None
         self.filter_text = ""
         self.paused = False
         self.recorder: Recorder | None = None
@@ -185,11 +191,14 @@ class ConsoleApp(App):
             f"Machine telemetry {telemetry_status}")
 
     def drain_events(self) -> None:
-        while True:
+        processed = 0
+        self._rendering_batch = True
+        while processed < 256:
             try:
                 item = self.bus.get_nowait()
             except queue.Empty:
                 break
+            processed += 1
             role = item["source"]
             if item["kind"] == "status":
                 message = f"{role} {'connected' if item.get('connected') else 'disconnected'} port={item.get('port')}"
@@ -250,6 +259,10 @@ class ConsoleApp(App):
                         self.grbl_status_host_ns = event.host_monotonic_ns
                         self.grbl_telemetry = extract_grbl_telemetry(item["line"])
                 self._add_event(event)
+        self._rendering_batch = False
+        self._flush_render_buffer()
+        if self._mpg_trace_dirty:
+            self._refresh_mpg_trace()
 
     def _add_event(self, event: Event) -> None:
         self._track_mpg_correlation(event)
@@ -284,11 +297,35 @@ class ConsoleApp(App):
             self._mpg_correlations[key] = new
             if old != 3 and new == 3:
                 self.mpg_matched += 1
+        if bit and old != new:
+            self._mpg_trace_dirty = True
+            if not self._rendering_batch:
+                self._refresh_mpg_trace()
+
+    def _refresh_mpg_trace(self) -> None:
         self.query_one("#mpg-trace", Static).update(
             "MPG observed: S3 submissions={} | C3 dry-run proposals={} | "
             "matched session/seq={}".format(
                 self.mpg_s3_submissions, self.mpg_c3_proposals,
                 self.mpg_matched))
+        self._mpg_trace_dirty = False
+
+    def _flush_render_buffer(self) -> None:
+        for key, selector in (("S3", "#s3-log"), ("C3", "#c3-log"),
+                              ("timeline", "#timeline")):
+            lines = self._render_buffer[key]
+            if lines:
+                self.query_one(selector, RichLog).write("\n".join(lines))
+                lines.clear()
+
+    def _render_many(self, events) -> None:
+        was_batching = self._rendering_batch
+        self._rendering_batch = True
+        for event in events:
+            self._render_event(event)
+        self._rendering_batch = was_batching
+        if not was_batching:
+            self._flush_render_buffer()
 
     def _render_event(self, event: Event) -> None:
         term = self.filter_text
@@ -301,19 +338,33 @@ class ConsoleApp(App):
         identity = (f" [session/seq {event.correlation_key}]"
                     if event.correlation_key else "")
         if event.source in ("S3", "C3"):
-            self.query_one(f"#{event.source.lower()}-log", RichLog).write(
-                f"{event.host_time} {event.category.upper():<10}{identity} {event.message}{proposal}")
-        self.query_one("#timeline", RichLog).write(
-            f"{event.host_time} {event.source:<2} {event.category.upper():<10}{identity} {event.message}{proposal}")
+            panel_line = (
+                f"{event.host_time} {event.category.upper():<10}{identity} "
+                f"{event.message}{proposal}")
+            if self._rendering_batch:
+                self._render_buffer[event.source].append(panel_line)
+            else:
+                self.query_one(f"#{event.source.lower()}-log", RichLog).write(panel_line)
+        timeline_line = (
+            f"{event.host_time} {event.source:<2} {event.category.upper():<10}"
+            f"{identity} {event.message}{proposal}")
+        if self._rendering_batch:
+            self._render_buffer["timeline"].append(timeline_line)
+        else:
+            self.query_one("#timeline", RichLog).write(timeline_line)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "filter":
             self.filter_text = event.value.lower().strip()
-            self.query_one("#s3-log", RichLog).clear()
-            self.query_one("#c3-log", RichLog).clear()
-            self.query_one("#timeline", RichLog).clear()
-            for recorded in self.recent:
-                self._render_event(recorded)
+            if self._filter_timer is not None:
+                self._filter_timer.stop()
+            self._filter_timer = self.set_timer(0.12, self._apply_filter)
+
+    def _apply_filter(self) -> None:
+        self.query_one("#s3-log", RichLog).clear()
+        self.query_one("#c3-log", RichLog).clear()
+        self.query_one("#timeline", RichLog).clear()
+        self._render_many(self.recent)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == "repl" and event.value:
@@ -353,8 +404,7 @@ class ConsoleApp(App):
         self.query_one("#pause", Button).label = "Resume" if self.paused else "Pause"
         if not self.paused:
             pending, self.paused_events = self.paused_events, deque(maxlen=2000)
-            for event in pending:
-                self._render_event(event)
+            self._render_many(pending)
             self._add_event(Event.from_line("HOST", "display resumed"))
 
     def action_export(self) -> None:

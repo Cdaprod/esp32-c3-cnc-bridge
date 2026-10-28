@@ -210,6 +210,36 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
     asyncio.run(scenario())
 
 
+def test_serial_burst_renders_in_widget_batches_and_bounds_each_drain(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        writes = []
+        original_write = RichLog.write
+
+        def capture_write(widget, renderable, *args, **kwargs):
+            writes.append((widget.id, str(renderable)))
+            return original_write(widget, renderable, *args, **kwargs)
+
+        with patch.object(RichLog, "write", capture_write):
+            async with app.run_test(size=(120, 40)):
+                writes.clear()  # Ignore one-time configured-port panel messages.
+                for index in range(300):
+                    app.bus.put_nowait({
+                        "kind": "line", "source": "S3",
+                        "line": f"event=runtime sample={index}",
+                    })
+                app.drain_events()
+                assert len(app.recent) == 256
+                assert app.bus.qsize() == 44
+                assert [widget for widget, _ in writes] == ["s3-log", "timeline"]
+                assert writes[0][1].count("event=runtime") == 256
+                writes.clear()
+                app.drain_events()
+                assert len(app.recent) == 300
+                assert [widget for widget, _ in writes] == ["s3-log", "timeline"]
+    asyncio.run(scenario())
+
+
 def test_s3_runtime_reports_unconfigured_deadman_as_unavailable(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
