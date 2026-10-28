@@ -48,11 +48,40 @@ int main(void)
         (uint16_t)packet.payload[6] | ((uint16_t)packet.payload[7] << 8)));
     assert(strcmp(command, "$J=G91 G21 X-0.010 F250\n") == 0);
 
+    /* Exercise the same trust/deadman/fresh-status/session-sequence gate used
+     * by the receiver before the production dry-run output seam. */
+    mpg_motion_sequence_t sequence = {0};
+    uint8_t duplicate_result = 0;
+    mpg_motion_sequence_reset(&sequence, packet.mac, packet.session_id,
+                              (uint16_t)(packet.seq - 1));
+    assert(mpg_motion_sequence_accept(&sequence, packet.mac, packet.session_id,
+        packet.session_id, packet.seq, &duplicate_result) == MPG_SEQUENCE_NEW);
+    mpg_motion_lease_t lease = {0};
+    assert(mpg_motion_admit(&lease, packet.mac, packet.session_id, packet.seq,
+        true, packet.payload[1] == 1, true, 1000, 250) == MPG_MOTION_OK);
+
     probe_t probe = {0};
     assert(mpg_motion_output_command(command, true, uart_sink, dry_run_sink,
         &probe) == MPG_OUTPUT_DRY_RUN);
     assert(probe.uart_calls == 0 && probe.log_calls == 1);
     assert(strcmp(probe.command, command) == 0);
+    mpg_motion_sequence_result(&sequence, packet.session_id, packet.seq, 1);
+    assert(mpg_motion_sequence_accept(&sequence, packet.mac, packet.session_id,
+        packet.session_id, packet.seq, &duplicate_result) == MPG_SEQUENCE_DUPLICATE);
+    assert(duplicate_result == 1);
+    assert(mpg_motion_sequence_accept(&sequence, packet.mac, packet.session_id,
+        packet.session_id + 1, (uint16_t)(packet.seq + 1),
+        &duplicate_result) == MPG_SEQUENCE_REJECT_SESSION);
+
+    /* Replaying that packet fails admission and has no output path to invoke. */
+    assert(mpg_motion_admit(&lease, packet.mac, packet.session_id, packet.seq,
+        true, packet.payload[1] == 1, true, 1010, 250) == MPG_MOTION_REJECT);
+    mpg_motion_lease_t denied_lease = {0};
+    assert(mpg_motion_admit(&denied_lease, packet.mac, packet.session_id,
+        packet.seq, true, packet.payload[1] == 1, false, 1010, 250) == MPG_MOTION_REJECT);
+    assert(mpg_motion_admit(&denied_lease, packet.mac, packet.session_id,
+        packet.seq, false, packet.payload[1] == 1, true, 1010, 250) == MPG_MOTION_REJECT);
+    assert(probe.uart_calls == 0 && probe.log_calls == 1);
 
     uint8_t malformed[sizeof(frame)];
     memcpy(malformed, frame, sizeof(frame));
