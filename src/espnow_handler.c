@@ -591,7 +591,8 @@ static bool peer_accepts_mpg_sequence(const espnow_rx_packet_t *packet,
     return reject_or_duplicate;
 }
 
-static void reset_new_sequence(const uint8_t *mac, uint32_t session_id)
+static void reset_new_sequence(const uint8_t *mac, uint32_t session_id,
+                               uint16_t initial_sequence)
 {
     xSemaphoreTake(peers_mutex, portMAX_DELAY);
     int idx = find_peer_index_locked(mac);
@@ -604,7 +605,7 @@ static void reset_new_sequence(const uint8_t *mac, uint32_t session_id)
             peers[idx].rx_seq_valid = false;
             peers[idx].last_rx_result = ESPNOW_RESULT_ERROR;
             mpg_motion_sequence_reset(&peers[idx].mpg_sequence, mac,
-                                      session_id, 0);
+                                      session_id, initial_sequence);
         }
     }
     xSemaphoreGive(peers_mutex);
@@ -1016,7 +1017,7 @@ static void on_espnow_recv_cb(const esp_now_recv_info_t *recv_info,
         if (ensure_radio_peer(mac) && add_peer_to_list(mac,
                 ESPNOW_PEER_PROTOCOL_LEGACY) >= 0) {
             reset_legacy_sequence(mac);
-            reset_new_sequence(mac, 0);
+            reset_new_sequence(mac, 0, 0);
             esp_now_send(mac, (const uint8_t *)CMD_PAIR_OK,
                          strlen(CMD_PAIR_OK));
         }
@@ -1064,7 +1065,12 @@ static void on_espnow_recv_cb(const esp_now_recv_info_t *recv_info,
             if (add_peer_to_list(mac, ESPNOW_PEER_PROTOCOL_NEW) < 0)
                 return;
 
-            reset_new_sequence(mac, new_packet.session_id);
+            /* Seed the motion window from PAIR itself. After a C3 reboot, an
+             * S3 that has been running for hours may already have a sequence
+             * above half-range relative to zero; resetting to zero would
+             * reject fresh packets as stale until the uint16 counter wrapped.
+             */
+            reset_new_sequence(mac, new_packet.session_id, new_packet.seq);
             // PAIR_ACK per il nuovo protocollo: oltre al tipo/versione,
             // conferma esplicitamente quale sensore il bridge ha riconosciuto
             // e quale funzione gli risulta associata.

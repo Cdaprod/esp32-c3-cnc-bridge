@@ -24,3 +24,4 @@ jobs:
           python3 tests/test_mpg_stop_gate.py
           python3 tests/test_uart_console_separation.py
           python3 tests/test_console_diagnostics.py
+          python3 tests/test_mpg_pair_sequence_baseline.py

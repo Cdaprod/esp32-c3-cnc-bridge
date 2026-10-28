@@ -79,6 +79,18 @@ int main(void)
                                       &duplicate_result) == MPG_SEQUENCE_DUPLICATE);
     assert(duplicate_result == 0);
 
+    /* A C3 that re-pairs with a long-running S3 seeds from the PAIR packet's
+     * sequence. A receiver reset to zero would misclassify this fresh value
+     * as stale once the S3 counter had advanced beyond half the uint16 range.
+     */
+    mpg_motion_sequence_reset(&sequence, a, 123, 50000);
+    assert(mpg_motion_sequence_accept(&sequence, a, 123, 123, 50002,
+                                      &duplicate_result) == MPG_SEQUENCE_NEW);
+    mpg_motion_sequence_result(&sequence, 123, 50002, 1);
+    assert(mpg_motion_sequence_accept(&sequence, a, 123, 123, 50002,
+                                      &duplicate_result) == MPG_SEQUENCE_DUPLICATE);
+    assert(duplicate_result == 1);
+
     /* Dry-run output is physically isolated, including logger error paths. */
     output_probe_t probe = { .log_success = true };
     assert(mpg_motion_output_command(cmd, true, probe_uart, probe_logger,
