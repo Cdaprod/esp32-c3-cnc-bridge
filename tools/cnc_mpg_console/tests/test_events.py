@@ -43,14 +43,14 @@ def test_c3_a_axis_dry_run_is_observed_proposal_not_uart_delivery():
     line = (
         "I (104) MPG: event=dry_run result=proposed "
         "mac=02:11:22:33:44:55 session=305419896 seq=257 axis=A "
-        "microns=10 feed=250 command_hex=244a3d473931204732312041302e30313020463235300a"
+        "microns=10 feed=500 command_hex=244a3d473931204732312041302e30313020463530300a"
     )
     event = Event.from_line("C3", line, monotonic_ns=988)
     assert event.category == "dry-run"
     assert event.fields["axis"] == "A"
     assert (event.fields["session"], event.fields["seq"]) == (
         "305419896", "257")
-    assert bytes.fromhex(event.fields["command_hex"]).decode() == "$J=G91 G21 A0.010 F250\n"
+    assert bytes.fromhex(event.fields["command_hex"]).decode() == "$J=G91 G21 A0.010 F500\n"
 
 
 def test_grbl_state_requires_explicit_status_event_and_expires():
