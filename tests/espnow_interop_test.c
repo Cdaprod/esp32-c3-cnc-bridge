@@ -4,6 +4,7 @@
 #include <string.h>
 #include "espnow_decode.h"
 #include "mpg_motion.h"
+#include "mpg_grbl_status.h"
 
 typedef struct { unsigned uart_calls; unsigned log_calls; char command[64]; } probe_t;
 
@@ -76,8 +77,14 @@ int main(void)
     assert(mpg_motion_sequence_accept(&sequence, packet.mac, packet.session_id,
         packet.session_id, packet.seq, &duplicate_result) == MPG_SEQUENCE_NEW);
     mpg_motion_lease_t lease = {0};
+    mpg_grbl_status_t grbl = {0};
+    const char idle_status[] = "<Idle|MPos:1.000,2.000,3.000|FS:0,0>";
+    assert(mpg_grbl_status_parse(&grbl, idle_status,
+                                 strlen(idle_status), 900));
+    const bool fresh_idle = mpg_grbl_status_fresh_idle(&grbl, 1000, 250);
+    assert(fresh_idle);
     assert(mpg_motion_admit(&lease, packet.mac, packet.session_id, packet.seq,
-        true, packet.payload[1] == 1, true, 1000, 250) == MPG_MOTION_OK);
+        true, packet.payload[1] == 1, fresh_idle, 1000, 250) == MPG_MOTION_OK);
 
     probe_t probe = {0};
     assert(mpg_motion_output_command(command, true, uart_sink, dry_run_sink,
@@ -100,6 +107,11 @@ int main(void)
         packet.seq, true, packet.payload[1] == 1, false, 1010, 250) == MPG_MOTION_REJECT);
     assert(mpg_motion_admit(&denied_lease, packet.mac, packet.session_id,
         packet.seq, false, packet.payload[1] == 1, true, 1010, 250) == MPG_MOTION_REJECT);
+    const bool expired_idle = mpg_grbl_status_fresh_idle(&grbl, 1151, 250);
+    assert(!expired_idle);
+    assert(mpg_motion_admit(&denied_lease, packet.mac, packet.session_id,
+        packet.seq + 1, true, packet.payload[1] == 1, expired_idle,
+        1151, 250) == MPG_MOTION_REJECT);
     assert(probe.uart_calls == 0 && probe.log_calls == 1);
 
     uint8_t malformed[sizeof(frame)];
