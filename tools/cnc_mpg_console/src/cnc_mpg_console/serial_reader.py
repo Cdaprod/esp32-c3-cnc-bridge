@@ -14,6 +14,16 @@ from .devices import choose_device, discover_devices
 MAX_SERIAL_LINE_BYTES = 8192
 
 
+def dtr_for_role(source: str) -> bool:
+    """Assert DTR for CircuitPython USB CDC so stdout is considered connected.
+
+    The C3 USB Serial/JTAG port stays deasserted because toggling its control
+    lines can reset the bridge. S3 uses native USB CDC; DTR enables its console
+    stream and does not send bytes to the application.
+    """
+    return source.upper() == "S3"
+
+
 class SerialReader(threading.Thread):
     def __init__(self, source: str, port: str | None, baud: int,
                  output: queue.Queue, *, allow_s3_repl: bool = False,
@@ -59,12 +69,14 @@ class SerialReader(threading.Thread):
                 self.stop_event.wait(1.0 if self.auto_role else 0.25)
                 continue
             try:
-                # Keep DTR/RTS low from open to avoid toggling reset/boot straps.
-                # exclusive=True prevents a second POSIX process from owning this port.
+                # CircuitPython's USB CDC console requires host DTR asserted
+                # before it reports serial_connected and delivers stdout.
+                # Keep C3's USB Serial/JTAG controls deasserted to avoid reset.
+                # exclusive=True prevents a second POSIX process owning a port.
                 stream = serial.Serial(baudrate=self.baud, timeout=0.1,
                                        write_timeout=0.2, exclusive=True,
                                        dsrdtr=False, rtscts=False)
-                stream.dtr = False
+                stream.dtr = dtr_for_role(self.source)
                 stream.rts = False
                 stream.port = self.port
                 stream.open()

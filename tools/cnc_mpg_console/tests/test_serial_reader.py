@@ -3,7 +3,13 @@ import pty
 import queue
 import time
 
-from cnc_mpg_console.serial_reader import SerialReader
+from cnc_mpg_console.serial_reader import SerialReader, dtr_for_role
+
+
+def test_dtr_enables_circuitpython_console_without_toggling_c3_controls():
+    assert dtr_for_role("S3")
+    assert dtr_for_role("s3")
+    assert not dtr_for_role("C3")
 
 
 def test_reader_receives_lines_passively_and_stops_cleanly():
