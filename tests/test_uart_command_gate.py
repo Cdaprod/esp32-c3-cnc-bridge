@@ -24,4 +24,16 @@ writer_start = source.index("static int mpg_uart_writer(")
 writer_end = source.index("static bool mpg_dry_run_logger(", writer_start)
 assert "serial_uart_mpg_owned()" in source[writer_start:writer_end], \
        "physical jog writer must require the MPG UART lease"
+
+watchdog_start = source.index("static void mpg_watchdog_task(")
+watchdog_end = source.index("\n}\n", watchdog_start) + 3
+watchdog = source[watchdog_start:watchdog_end]
+assert "tcp_server_get_client_count() > 0" in watchdog
+lock_take = watchdog.index("xSemaphoreTake(mpg_mutex")
+revoke = watchdog.index("mpg_motion_revoke(&mpg_lease)")
+cancel = watchdog.index("mpg_stop_uart()")
+release = watchdog.index("serial_uart_mpg_release()")
+lock_give = watchdog.index("xSemaphoreGive(mpg_mutex)")
+assert lock_take < revoke < cancel < release < lock_give, \
+       "TCP takeover must cancel and relinquish MPG ownership under one mutex"
 print("v1 and legacy UART_COMMAND fail-closed regressions passed")
