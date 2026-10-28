@@ -304,7 +304,10 @@ static bool ensure_radio_peer(const uint8_t *mac)
 
     esp_now_peer_info_t info = {0};
     memcpy(info.peer_addr, mac, 6);
-    info.channel = espnow_channel;
+    /* Channel 0 follows the active AP/STA channel. Hard-coding the channel
+     * sampled during startup becomes stale if STA association later moves
+     * the APSTA radio to the external AP's channel. */
+    info.channel = ESPNOW_PEER_CHANNEL_CURRENT_WIFI;
     info.ifidx = WIFI_IF_STA;
     info.encrypt = false;
 
@@ -1283,8 +1286,8 @@ void espnow_init_handler(void)
     }
 
     espnow_channel = get_wifi_channel();
-    ESP_LOGI(TAG, "Canale ESP-NOW: %d", espnow_channel);
-    esp_wifi_set_channel(espnow_channel, WIFI_SECOND_CHAN_NONE);
+    ESP_LOGI(TAG, "Canale Wi-Fi all'avvio ESP-NOW: %d; i peer seguono il canale Wi-Fi attivo",
+             espnow_channel);
 
     // MODIFICA 1: gestione errore esp_now_init() con cleanup del mutex
     esp_err_t espnow_init_err = esp_now_init();
@@ -1354,7 +1357,7 @@ void espnow_init_handler(void)
     uint8_t broadcast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
     esp_now_peer_info_t broadcast_peer = {0};
     memcpy(broadcast_peer.peer_addr, broadcast_mac, 6);
-    broadcast_peer.channel = espnow_channel;
+    broadcast_peer.channel = ESPNOW_PEER_CHANNEL_CURRENT_WIFI;
     broadcast_peer.ifidx = WIFI_IF_STA;
     broadcast_peer.encrypt = false;
     esp_err_t add_broadcast = esp_now_add_peer(&broadcast_peer);
