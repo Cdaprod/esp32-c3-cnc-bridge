@@ -78,10 +78,17 @@ static char mpg_line[128];
 static size_t mpg_line_len = 0;
 static bool mpg_line_overflow = false;
 
-static bool mpg_stop_uart(void)
+static int mpg_uart_cancel_writer(uint8_t cancel, void *context)
 {
-    const uint8_t cancel = 0x85;
-    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1) == 1;
+    (void)context;
+    return uart_write_bytes(UART_NUM, (const char *)&cancel, 1);
+}
+
+static mpg_output_result_t mpg_stop_uart(void)
+{
+    return mpg_motion_output_cancel(
+        MPG_ENABLE_MOTION && !MPG_DRY_RUN,
+        mpg_uart_cancel_writer, NULL);
 }
 
 static int mpg_uart_writer(const char *command, size_t length, void *context)
@@ -147,16 +154,15 @@ static void mpg_watchdog_task(void *unused)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
-        bool expired = false;
+        mpg_output_result_t cancel_result = MPG_OUTPUT_SUPPRESSED;
         xSemaphoreTake(mpg_mutex, portMAX_DELAY);
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (mpg_motion_expired(&mpg_lease, now) ||
             (mpg_lease.active && tcp_server_get_client_count() > 0)) {
             mpg_motion_revoke(&mpg_lease);
-            expired = true;
             /* Keep the MPG mutex through cancellation and ownership release;
              * otherwise a new lease could race between revoke and 0x85. */
-            mpg_stop_uart();
+            cancel_result = mpg_stop_uart();
             serial_uart_mpg_release();
         }
         xSemaphoreGive(mpg_mutex);
@@ -165,8 +171,12 @@ static void mpg_watchdog_task(void *unused)
             uart_write_bytes(UART_NUM, &status_query, 1);
             last_query_ms = now;
         }
-        if (expired) {
+        if (cancel_result == MPG_OUTPUT_SENT) {
             ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
+        } else if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
+            ESP_LOGI("MPG", "MPG lease expired: controller cancel suppressed by disarmed/dry-run mode");
+        } else if (cancel_result == MPG_OUTPUT_FAILED) {
+            ESP_LOGE("MPG", "MPG lease expired: GRBL jog cancel output failed");
         }
     }
 }

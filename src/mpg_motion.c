@@ -121,3 +121,11 @@ mpg_output_result_t mpg_motion_output_command(const char *command,
         return MPG_OUTPUT_FAILED;
     return MPG_OUTPUT_SENT;
 }
+
+mpg_output_result_t mpg_motion_output_cancel(bool allow_physical_output,
+    mpg_realtime_writer_t writer, void *context)
+{
+    if (!allow_physical_output) return MPG_OUTPUT_SUPPRESSED;
+    if (!writer || writer(0x85, context) != 1) return MPG_OUTPUT_FAILED;
+    return MPG_OUTPUT_SENT;
+}
