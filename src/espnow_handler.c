@@ -155,6 +155,7 @@ static void mpg_watchdog_task(void *unused)
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
         mpg_output_result_t cancel_result = MPG_OUTPUT_SUPPRESSED;
+        bool lease_ended = false;
         xSemaphoreTake(mpg_mutex, portMAX_DELAY);
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (mpg_motion_expired(&mpg_lease, now) ||
@@ -164,6 +165,7 @@ static void mpg_watchdog_task(void *unused)
              * otherwise a new lease could race between revoke and 0x85. */
             cancel_result = mpg_stop_uart();
             serial_uart_mpg_release();
+            lease_ended = true;
         }
         xSemaphoreGive(mpg_mutex);
         if ((uint32_t)(now - last_query_ms) >= 250) {
@@ -171,12 +173,14 @@ static void mpg_watchdog_task(void *unused)
             uart_write_bytes(UART_NUM, &status_query, 1);
             last_query_ms = now;
         }
-        if (cancel_result == MPG_OUTPUT_SENT) {
-            ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
-        } else if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
-            ESP_LOGI("MPG", "MPG lease expired: controller cancel suppressed by disarmed/dry-run mode");
-        } else if (cancel_result == MPG_OUTPUT_FAILED) {
-            ESP_LOGE("MPG", "MPG lease expired: GRBL jog cancel output failed");
+        if (lease_ended) {
+            if (cancel_result == MPG_OUTPUT_SENT) {
+                ESP_LOGW("MPG", "MPG lease expired: GRBL jog cancel sent");
+            } else if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
+                ESP_LOGI("MPG", "MPG lease expired: controller cancel suppressed by disarmed/dry-run mode");
+            } else if (cancel_result == MPG_OUTPUT_FAILED) {
+                ESP_LOGE("MPG", "MPG lease expired: GRBL jog cancel output failed");
+            }
         }
     }
 }

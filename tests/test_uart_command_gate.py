@@ -44,4 +44,9 @@ release = watchdog.index("serial_uart_mpg_release()")
 lock_give = watchdog.index("xSemaphoreGive(mpg_mutex)")
 assert lock_take < revoke < cancel < release < lock_give, \
        "TCP takeover must cancel and relinquish MPG ownership under one mutex"
+assert "bool lease_ended = false;" in watchdog
+assert "if (lease_ended)" in watchdog
+assert watchdog.index("if (lease_ended)") < watchdog.index(
+    "if (cancel_result == MPG_OUTPUT_SENT)"), \
+    "watchdog cancellation logs must be emitted only when a lease ends"
 print("v1 and legacy UART_COMMAND fail-closed regressions passed")
