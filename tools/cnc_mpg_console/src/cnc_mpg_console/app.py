@@ -58,7 +58,7 @@ class ConsoleApp(App):
         self.radio_log_lines = {"S3": 0, "C3": 0}
         self.grbl_status: str | None = None
         self.grbl_status_host_ns: int | None = None
-        self.s3_input_status: tuple[str, str, str] | None = None
+        self.s3_input_status: tuple[str, str, str, str, str, str] | None = None
         self.s3_input_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
@@ -134,10 +134,12 @@ class ConsoleApp(App):
                             time.monotonic_ns(), max_age_ns=30_000_000_000):
                 input_status = "stale"
             else:
-                input_status = "/".join(self.s3_input_status)
+                backend, inputs, selectors, axis, increment, deadman = self.s3_input_status
+                input_status = (f"{backend}/{inputs}/{selectors} axis={axis} "
+                                f"step={increment} deadman={deadman}")
         self.query_one("#status", Static).update(
             f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
-            f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)    "
+            f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
             f"Radio S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
             f"Inputs {input_status}    GRBL {grbl_state} (from C3 status log only)")
 
@@ -170,11 +172,22 @@ class ConsoleApp(App):
                         event.fields.get("input_validity") in
                         ("unknown", "valid", "invalid") and
                         event.fields.get("selector_validity") in
-                        ("unknown", "valid", "invalid")):
+                        ("unknown", "valid", "invalid") and
+                        event.fields.get("axis") in
+                        ("OFF", "X", "Y", "Z", "4", "5", "6", "invalid",
+                         "unknown", "unavailable") and
+                        event.fields.get("increment") in
+                        ("X1", "X10", "X100", "invalid", "unknown",
+                         "unavailable") and
+                        event.fields.get("deadman") in
+                        ("active", "inactive", "unknown", "unavailable")):
                     self.s3_input_status = (
                         event.fields["input_backend"],
                         event.fields["input_validity"],
                         event.fields["selector_validity"],
+                        event.fields["axis"],
+                        event.fields["increment"],
+                        event.fields["deadman"],
                     )
                     self.s3_input_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
