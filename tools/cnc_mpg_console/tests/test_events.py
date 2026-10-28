@@ -16,6 +16,9 @@ def test_s3_invalid_input_and_encoder_overrun_are_safety_events():
     assert classify_line(
         "[event] event=input_validity domain=selectors valid=False reason=not_one_hot"
     ) == "safety"
+    assert classify_line(
+        "[event] event=input_validity domain=hardware valid=False "
+        "reason=mcp23017_read_failed") == "safety"
     overrun = Event.from_line(
         "S3", "[event] event=encoder_overrun delta=100 max_detents=4",
         monotonic_ns=444)
