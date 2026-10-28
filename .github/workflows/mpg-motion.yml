@@ -20,3 +20,4 @@ jobs:
         run: |
           python3 tests/test_uart_command_gate.py
           python3 tests/test_mpg_stop_gate.py
+          python3 tests/test_uart_console_separation.py
