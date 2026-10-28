@@ -184,13 +184,13 @@ def extract_radio_link_event(source: str, line: str) -> dict[str, str] | None:
             line,
         )
         if match:
-            return {"state": "paired", "peer": match.group(1),
+            return {"state": "pair_accepted", "peer": match.group(1),
                     "session": match.group(2)}
         match = re.search(
             r"\bPeer ([0-9A-Fa-f:]+) rimosso per timeout\b", line
         )
         if match:
-            return {"state": "lost", "peer": match.group(1),
+            return {"state": "peer_removed", "peer": match.group(1),
                     "reason": "timeout"}
     return None
 

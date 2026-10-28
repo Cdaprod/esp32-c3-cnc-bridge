@@ -76,7 +76,7 @@ def test_dashboard_shows_last_observed_radio_transitions_without_claiming_live_l
             app.refresh_status()
             status = str(app.query_one("#status").render())
             assert "S3 last=paired session=123 (0s ago)" in status
-            assert "C3 last=paired session=0x0000007B peer=aa:bb:cc:dd:ee:ff (0s ago)" in status
+            assert "C3 last=pair_accepted session=0x0000007B peer=aa:bb:cc:dd:ee:ff (0s ago)" in status
             assert "Radio last observed" in status
 
             app.bus.put_nowait({
@@ -86,7 +86,7 @@ def test_dashboard_shows_last_observed_radio_transitions_without_claiming_live_l
             })
             app.drain_events()
             app.refresh_status()
-            assert "C3 last=lost peer=aa:bb:cc:dd:ee:ff reason=timeout" in str(
+            assert "C3 last=peer_removed peer=aa:bb:cc:dd:ee:ff reason=timeout" in str(
                 app.query_one("#status").render())
     asyncio.run(scenario())
 

@@ -150,12 +150,12 @@ def test_radio_link_status_requires_explicit_device_transition():
     assert extract_radio_link_event(
         "C3", "I (123) ESPNOW: PAIR v2 accettato da aa:bb:cc:dd:ee:ff "
               "session=0x0000007B") == {
-                  "state": "paired", "peer": "aa:bb:cc:dd:ee:ff",
+                  "state": "pair_accepted", "peer": "aa:bb:cc:dd:ee:ff",
                   "session": "0x0000007B",
               }
     assert extract_radio_link_event(
         "C3", "W (124) ESPNOW: Peer aa:bb:cc:dd:ee:ff rimosso per timeout") == {
-            "state": "lost", "peer": "aa:bb:cc:dd:ee:ff",
+            "state": "peer_removed", "peer": "aa:bb:cc:dd:ee:ff",
             "reason": "timeout",
         }
     assert extract_radio_link_event("S3", "[espnow] paired=true") is None
