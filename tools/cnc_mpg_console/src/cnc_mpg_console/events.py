@@ -70,6 +70,8 @@ class Event:
 def classify_line(line: str) -> str:
     """Classify only what a log line says; never infer missing device telemetry."""
     text = line.lower()
+    if "event=grbl_jog_ack" in text:
+        return "controller" if "result=accepted" in text else "safety"
     if "event=motion_admission" in text:
         if "result=rejected" in text:
             return "safety"

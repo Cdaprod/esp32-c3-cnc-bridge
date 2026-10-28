@@ -53,6 +53,15 @@ def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line("I (102) GRBL: event=uart_tx operation=mpg_jog seq=9") == "controller"
 
 
+def test_grbl_jog_ack_separates_controller_acceptance_from_rejection():
+    assert classify_line(
+        "I MPG: event=grbl_jog_ack result=accepted reason=grbl_ok session=3 seq=9"
+    ) == "controller"
+    assert classify_line(
+        "W MPG: event=grbl_jog_ack result=rejected reason=grbl_timeout session=3 seq=9"
+    ) == "safety"
+
+
 def test_controller_uart_ownership_rejection_is_visible_as_safety_event():
     event = Event.from_line(
         "C3", "W (105) SERIAL_HANDLER: event=uart_tx_rejected "
