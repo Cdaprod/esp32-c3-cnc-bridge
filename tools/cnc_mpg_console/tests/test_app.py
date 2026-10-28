@@ -174,3 +174,26 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
             assert "Inputs stale" in str(app.query_one("#status").render())
 
     asyncio.run(scenario())
+
+
+def test_s3_runtime_reports_unconfigured_deadman_as_unavailable(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=runtime input_backend=configured "
+                        "input_validity=valid selector_validity=invalid "
+                        "axis=OFF selector_position=OFF increment=invalid "
+                        "deadman=unavailable",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.drain_events()
+            app.refresh_status()
+            assert app.s3_input_status == (
+                "configured", "valid", "invalid", "OFF", "OFF",
+                "invalid", "unavailable")
+            assert "deadman=unavailable" in str(
+                app.query_one("#status").render())
+
+    asyncio.run(scenario())
