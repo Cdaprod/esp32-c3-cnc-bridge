@@ -52,6 +52,18 @@ def test_controller_uart_ownership_rejection_is_visible_as_safety_event():
     assert event.fields["total"] == "3"
 
 
+def test_grbl_realtime_jog_cancel_is_visible_as_safety_event():
+    event = Event.from_line(
+        "C3", "I (106) GRBL: event=uart_tx operation=mpg_stop_cancel "
+        "session=14 seq=9 bytes=1", monotonic_ns=990)
+    assert event.category == "safety"
+    assert event.fields["operation"] == "mpg_stop_cancel"
+    assert event.fields["bytes"] == "1"
+    # Jog command transmission stays classified as controller output.
+    assert classify_line(
+        "I (107) GRBL: event=uart_tx operation=mpg_jog seq=10") == "controller"
+
+
 def test_c3_dry_run_proposal_keeps_packet_identity_and_exact_command():
     line = (
         "I (103) MPG: event=dry_run result=proposed "

@@ -72,6 +72,7 @@ def classify_line(line: str) -> str:
     text = line.lower()
     if ("event=uart_tx_rejected" in text or
             "event=motion_admission" in text or "event=input_rejected" in text or
+            "event=uart_tx operation=mpg_stop_cancel" in text or
             "event=encoder_overrun" in text or
             ("event=input_validity" in text and "valid=false" in text)):
         return "safety"
