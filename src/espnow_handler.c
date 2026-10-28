@@ -729,6 +729,7 @@ static void espnow_rx_task(void *pvParameters)
             uint8_t result = ESPNOW_RESULT_ERROR;
 #if MPG_ENABLE_MOTION
             bool jog_sent = false;
+            const char *reject_reason = "untrusted_peer";
             char axis = '?';
             int32_t microns = 0;
             uint16_t feed = 0;
@@ -739,9 +740,15 @@ static void espnow_rx_task(void *pvParameters)
              */
             const bool trusted = mpg_trusted_ready &&
                 memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
-            if (trusted && mpg_mutex && packet.payload_len == 8 &&
-                tcp_server_get_client_count() == 0 &&
-                serial_uart_tx_idle()) {
+            if (!trusted) {
+                reject_reason = "untrusted_peer";
+            } else if (!mpg_mutex || packet.payload_len != 8) {
+                reject_reason = "invalid_payload_or_state";
+            } else if (tcp_server_get_client_count() != 0) {
+                reject_reason = "controller_owned_by_tcp";
+            } else if (!serial_uart_tx_idle()) {
+                reject_reason = "controller_uart_busy";
+            } else {
                 axis = (char)packet.payload[0];
                 const bool deadman = packet.payload[1] == 1;
                 const uint32_t bits = (uint32_t)packet.payload[2] |
@@ -776,21 +783,42 @@ static void espnow_rx_task(void *pvParameters)
                         if (uart_write_bytes(UART_NUM, cmd, len) == len) {
                             result = ESPNOW_RESULT_OK;
                             jog_sent = true;
+                            reject_reason = "none";
                         } else {
                             mpg_motion_revoke(&mpg_lease);
+                            reject_reason = "uart_write_failed";
                         }
                     } else if (admitted == MPG_MOTION_EXPIRED) {
                         mpg_stop_uart();
+                        reject_reason = "lease_expired_stop_sent";
+                    } else {
+                        reject_reason = "motion_admission_rejected";
                     }
+                } else if (!fresh) {
+                    reject_reason = "grbl_status_not_fresh_idle";
+                } else {
+                    reject_reason = "invalid_jog_parameters";
                 }
                 xSemaphoreGive(mpg_mutex);
             }
             if (jog_sent) {
+                ESP_LOGI("MPG", "event=motion_admission result=accepted session=%lu seq=%u axis=%c microns=%ld feed=%u",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq, axis, (long)microns,
+                         (unsigned)feed);
                 ESP_LOGI("GRBL", "event=uart_tx operation=mpg_jog session=%lu seq=%u axis=%c microns=%ld feed=%u",
                          (unsigned long)packet.session_id,
                          (unsigned)packet.seq, axis, (long)microns,
                          (unsigned)feed);
+            } else {
+                ESP_LOGW("MPG", "event=motion_admission result=rejected reason=%s session=%lu seq=%u axis=%c microns=%ld feed=%u",
+                         reject_reason, (unsigned long)packet.session_id,
+                         (unsigned)packet.seq, axis, (long)microns,
+                         (unsigned)feed);
             }
+#else
+            ESP_LOGW("MPG", "event=motion_admission result=rejected reason=motion_disabled session=%lu seq=%u",
+                     (unsigned long)packet.session_id, (unsigned)packet.seq);
 #endif
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
                                 packet.session_id, packet.seq, &result, 1);

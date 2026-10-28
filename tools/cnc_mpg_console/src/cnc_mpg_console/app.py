@@ -100,7 +100,7 @@ class ConsoleApp(App):
             reader = self.readers[role]
             message = (f"Configured port: {port}" if port else
                        "Automatic discovery active; role matching must be unambiguous." if reader.auto_role else
-                       "No unambiguous port configured. Use --s3-port / --c3-port; this console will not guess.")
+                       "Port disabled: none selected. Pass --s3-port/--c3-port, or omit that flag for unambiguous discovery.")
             self.query_one(f"#{role.lower()}-log", RichLog).write(message)
 
     def on_unmount(self) -> None:
@@ -139,6 +139,9 @@ class ConsoleApp(App):
                     self.errors[role] += 1
                 self._add_event(Event.from_line(role, message,
                     monotonic_ns=item.get("host_monotonic_ns"), wall_time=item.get("host_time")))
+                if item.get("connected"):
+                    self.query_one(f"#{role.lower()}-log", RichLog).write(
+                        "Passive stream attached. Output emitted before attachment (including boot logs) is not replayed.")
             elif item["kind"] == "overflow":
                 self._add_event(Event.from_line(role, f"reader queue overflow; dropped={item['dropped']}",
                     monotonic_ns=item.get("host_monotonic_ns"), wall_time=item.get("host_time")))

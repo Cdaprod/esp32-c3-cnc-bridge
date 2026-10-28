@@ -432,12 +432,13 @@ void app_main(void)
 
 
     // ========================================================
-    // DISABILITA LOG DI DEFAULT
+    // Keep vendor chatter quiet by default. Core diagnostics are enabled
+    // independently below so NVS debug_level=0 cannot silence the console.
     // ========================================================
 
     esp_log_level_set(
         "*",
-        ESP_LOG_NONE
+        ESP_LOG_WARN
     );
 
 
@@ -718,6 +719,16 @@ void app_main(void)
             "\n🔇 Debug mode disabled\n"
         );
     }
+
+    // Structured integration diagnostics are part of the passive USB console,
+    // not optional verbose debugging. This does not change command handling.
+    esp_log_level_set("ESPNOW", ESP_LOG_INFO);
+    esp_log_level_set("GRBL", ESP_LOG_INFO);
+    esp_log_level_set("MPG", ESP_LOG_INFO);
+    esp_log_level_set("SERIAL_HANDLER", ESP_LOG_INFO);
+
+    printf("[event] event=console_ready interface=usb_serial_jtag controller_uart=uart0 tx_gpio=%d rx_gpio=%d baud=%d\n",
+           UART_TX_PIN, UART_RX_PIN, UART_BAUD_RATE);
 
 
     // ========================================================

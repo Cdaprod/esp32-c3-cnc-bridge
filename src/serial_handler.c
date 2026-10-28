@@ -6,6 +6,7 @@
 #include <freertos/queue.h>
 #include <driver/uart.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include "serial_handler.h"
 #include "config.h"
 
@@ -16,6 +17,27 @@ static QueueHandle_t uart_to_tcp_queue = NULL;
 static QueueHandle_t uart_espnow_queue = NULL;
 static QueueHandle_t uart_tx_queue = NULL;
 static volatile bool uart_tx_busy = false;
+static uint32_t uart_rx_diag_bytes = 0;
+static uint32_t uart_rx_diag_since_ms = 0;
+static uint32_t uart_tx_diag_bytes = 0;
+static uint32_t uart_tx_diag_since_ms = 0;
+
+/* Aggregate metadata only: never dump arbitrary controller command bytes. */
+static void log_uart_activity(bool transmit, int byte_count)
+{
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t *total = transmit ? &uart_tx_diag_bytes : &uart_rx_diag_bytes;
+    uint32_t *since = transmit ? &uart_tx_diag_since_ms : &uart_rx_diag_since_ms;
+    *total += (uint32_t)byte_count;
+    if (*since == 0) *since = now_ms;
+    if ((uint32_t)(now_ms - *since) >= 1000) {
+        ESP_LOGI(TAG, "event=uart_%s source=uart0 bytes_window=%lu window_ms=%lu payload=omitted",
+                 transmit ? "tx" : "rx", (unsigned long)*total,
+                 (unsigned long)(now_ms - *since));
+        *total = 0;
+        *since = now_ms;
+    }
+}
 
 bool serial_uart_tx_idle(void)
 {
@@ -164,6 +186,7 @@ bool serial_get_data(uart_data_t **data, TickType_t wait_time) {
     int len = uart_read_bytes(UART_NUM, uart_data->data, UART_BUF_SIZE, wait_time);
     if (len > 0) {
         uart_data->length = len;
+        log_uart_activity(false, len);
         *data = uart_data;
         return true;
     }
@@ -187,6 +210,7 @@ static void uart_tx_task(void *pvParameters) {
                 if (written < 0 || written != data->length) {
                     ESP_LOGW(TAG, "Scrittura UART incompleta: %d/%d", written, data->length);
                 } else {
+                    log_uart_activity(true, written);
                     esp_err_t err = uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(100));
                     if (err != ESP_OK) {
                         ESP_LOGW(TAG, "Timeout/errore attesa TX UART: %s", esp_err_to_name(err));
