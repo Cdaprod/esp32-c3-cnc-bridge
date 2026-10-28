@@ -851,26 +851,32 @@ static void espnow_rx_task(void *pvParameters)
         case ESPNOW_MSG_MPG_STOP: {
             /*
              * GRBL 1.1 realtime jog cancel is byte 0x85, without a newline.
-             * This is accepted even when no motion authorization exists:
-             * stopping motion cannot create new commanded movement.
-             * Use the UART driver directly so cancellation does not sit
-             * behind queued G-code in serial_send_data().
+             * It must bypass the normal TX queue so an enabled physical
+             * cancel cannot wait behind queued G-code. The shared mode gate
+             * suppresses this output in disarmed and dry-run builds.
              */
-            const uint8_t jog_cancel = 0x85;
-            int written;
+            mpg_output_result_t cancel_result;
             if (mpg_mutex) {
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
                 mpg_motion_revoke(&mpg_lease);
-                written = uart_write_bytes(UART_NUM,
-                                           (const char *)&jog_cancel, 1);
+                cancel_result = mpg_stop_uart();
                 serial_uart_mpg_release();
                 xSemaphoreGive(mpg_mutex);
             } else {
-                written = uart_write_bytes(UART_NUM,
-                                           (const char *)&jog_cancel, 1);
+                cancel_result = mpg_stop_uart();
             }
-            uint8_t result = written == 1 ?
+            uint8_t result = cancel_result == MPG_OUTPUT_SENT ?
                 ESPNOW_RESULT_OK : ESPNOW_RESULT_ERROR;
+            if (cancel_result == MPG_OUTPUT_SUPPRESSED) {
+                ESP_LOGW("MPG", "event=motion_admission result=rejected reason=stop_suppressed mode=%s session=%lu seq=%u",
+                         MPG_DRY_RUN ? "dry_run" : "disarmed",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq);
+            } else if (cancel_result == MPG_OUTPUT_FAILED) {
+                ESP_LOGE("MPG", "event=motion_admission result=rejected reason=stop_output_failed session=%lu seq=%u",
+                         (unsigned long)packet.session_id,
+                         (unsigned)packet.seq);
+            }
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;
