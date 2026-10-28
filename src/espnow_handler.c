@@ -31,6 +31,12 @@
 #else
 #define MPG_ENABLE_MOTION 0
 #endif
+#if MPG_ENABLE_MOTION && defined(CONFIG_MPG_DRY_RUN)
+#define MPG_DRY_RUN CONFIG_MPG_DRY_RUN
+#else
+/* Missing configuration is fail-closed: command output remains dry-run. */
+#define MPG_DRY_RUN 1
+#endif
 /* Configured using idf.py menuconfig, not firmware-source substitutions. */
 #if MPG_ENABLE_MOTION
 static uint8_t mpg_trusted_peer[6] = {0};
@@ -66,6 +72,19 @@ static bool mpg_stop_uart(void)
 {
     const uint8_t cancel = 0x85;
     return uart_write_bytes(UART_NUM, (const char *)&cancel, 1) == 1;
+}
+
+static int mpg_uart_writer(const char *command, size_t length, void *context)
+{
+    (void)context;
+    return uart_write_bytes(UART_NUM, command, (uint32_t)length);
+}
+
+static bool mpg_dry_run_logger(const char *command, void *context)
+{
+    (void)context;
+    ESP_LOGI("MPG", "DRY_RUN command=%s", command);
+    return true;
 }
 
 static void mpg_telemetry_ingest(const uint8_t *data, int len)
@@ -148,6 +167,7 @@ typedef struct {
     uint16_t last_rx_seq;
     bool rx_seq_valid;
     uint8_t last_rx_result;
+    mpg_motion_sequence_t mpg_sequence;
 
     // Sequence state for the legacy pendant protocol.
     uint16_t legacy_last_seq;
@@ -520,20 +540,22 @@ static bool seq_is_newer(uint16_t seq, uint16_t last_seq)
 static bool peer_accepts_sequence(const espnow_rx_packet_t *packet,
                                   uint8_t *duplicate_result)
 {
-    bool duplicate = false;
+    bool reject_or_duplicate = false;
     *duplicate_result = ESPNOW_RESULT_ERROR;
 
     xSemaphoreTake(peers_mutex, portMAX_DELAY);
     int idx = find_peer_index_locked(packet->mac);
-    if (idx >= 0 && peers[idx].rx_seq_valid &&
-        peers[idx].last_rx_session == packet->session_id) {
-        if (!seq_is_newer(packet->seq, peers[idx].last_rx_seq)) {
-            duplicate = true;
+    if (idx < 0 || peers[idx].last_rx_session != packet->session_id) {
+        /* The active pairing session is authoritative. */
+        reject_or_duplicate = true;
+    } else if (peers[idx].rx_seq_valid &&
+               !seq_is_newer(packet->seq, peers[idx].last_rx_seq)) {
+        reject_or_duplicate = true;
+        if (packet->seq == peers[idx].last_rx_seq)
             *duplicate_result = peers[idx].last_rx_result;
-        }
     }
     xSemaphoreGive(peers_mutex);
-    return duplicate;
+    return reject_or_duplicate;
 }
 
 static void remember_sequence(const espnow_rx_packet_t *packet, uint8_t result)
@@ -545,8 +567,31 @@ static void remember_sequence(const espnow_rx_packet_t *packet, uint8_t result)
         peers[idx].last_rx_seq = packet->seq;
         peers[idx].rx_seq_valid = true;
         peers[idx].last_rx_result = result;
+        mpg_motion_sequence_result(&peers[idx].mpg_sequence,
+            packet->session_id, packet->seq, result);
     }
     xSemaphoreGive(peers_mutex);
+}
+
+static bool peer_accepts_mpg_sequence(const espnow_rx_packet_t *packet,
+                                      uint8_t *cached_result)
+{
+    bool reject_or_duplicate = true;
+    *cached_result = ESPNOW_RESULT_ERROR;
+    xSemaphoreTake(peers_mutex, portMAX_DELAY);
+    int idx = find_peer_index_locked(packet->mac);
+    if (idx >= 0) {
+        mpg_sequence_result_t accepted = mpg_motion_sequence_accept(
+            &peers[idx].mpg_sequence, packet->mac,
+            peers[idx].last_rx_session, packet->session_id, packet->seq,
+            cached_result);
+        reject_or_duplicate = accepted != MPG_SEQUENCE_NEW;
+        if (accepted == MPG_SEQUENCE_REJECT_SESSION ||
+            accepted == MPG_SEQUENCE_REJECT_STALE)
+            *cached_result = ESPNOW_RESULT_ERROR;
+    }
+    xSemaphoreGive(peers_mutex);
+    return reject_or_duplicate;
 }
 
 static void reset_new_sequence(const uint8_t *mac, uint32_t session_id)
@@ -554,10 +599,16 @@ static void reset_new_sequence(const uint8_t *mac, uint32_t session_id)
     xSemaphoreTake(peers_mutex, portMAX_DELAY);
     int idx = find_peer_index_locked(mac);
     if (idx >= 0) {
-        peers[idx].last_rx_session = session_id;
-        peers[idx].last_rx_seq = 0;
-        peers[idx].rx_seq_valid = false;
-        peers[idx].last_rx_result = ESPNOW_RESULT_ERROR;
+        /* A retransmitted PAIR in the current session must not reopen its
+         * sequence window; only a genuinely new session resets baselines. */
+        if (peers[idx].last_rx_session != session_id) {
+            peers[idx].last_rx_session = session_id;
+            peers[idx].last_rx_seq = 0;
+            peers[idx].rx_seq_valid = false;
+            peers[idx].last_rx_result = ESPNOW_RESULT_ERROR;
+            mpg_motion_sequence_reset(&peers[idx].mpg_sequence, mac,
+                                      session_id, 0);
+        }
     }
     xSemaphoreGive(peers_mutex);
 }
@@ -701,6 +752,13 @@ static void espnow_rx_task(void *pvParameters)
 
         case ESPNOW_MSG_MPG_JOG: {
             uint8_t result = ESPNOW_RESULT_ERROR;
+            uint8_t duplicate_result = ESPNOW_RESULT_ERROR;
+            if (peer_accepts_mpg_sequence(&packet, &duplicate_result)) {
+                send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
+                                    packet.session_id, packet.seq,
+                                    &duplicate_result, 1);
+                break;
+            }
 #if MPG_ENABLE_MOTION
             /*
              * This path only works with a locally provisioned six-byte MAC,
@@ -709,6 +767,7 @@ static void espnow_rx_task(void *pvParameters)
              */
             const bool trusted = mpg_trusted_ready &&
                 memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
+            const char *reject_reason = NULL;
             if (trusted && mpg_mutex && packet.payload_len == 8 &&
                 tcp_server_get_client_count() == 0 &&
                 serial_uart_tx_idle()) {
@@ -742,18 +801,48 @@ static void espnow_rx_task(void *pvParameters)
                         &mpg_lease, packet.mac, packet.session_id, packet.seq,
                         trusted, deadman, fresh, now, 250);
                     if (admitted == MPG_MOTION_OK) {
-                        const int len = (int)strlen(cmd);
-                        if (uart_write_bytes(UART_NUM, cmd, len) == len)
+                        const mpg_output_result_t output =
+                            mpg_motion_output_command(cmd, MPG_DRY_RUN,
+                                mpg_uart_writer, mpg_dry_run_logger, NULL);
+                        if (output == MPG_OUTPUT_SENT ||
+                            output == MPG_OUTPUT_DRY_RUN) {
                             result = ESPNOW_RESULT_OK;
-                        else
+                            ESP_LOGI("MPG", "%s accepted MAC=" MACSTR
+                                " session=0x%08lX seq=%u axis=%c delta_um=%ld feed=%u",
+                                MPG_DRY_RUN ? "DRY_RUN" : "UART",
+                                MAC2STR(packet.mac),
+                                (unsigned long)packet.session_id,
+                                (unsigned)packet.seq, axis, (long)microns, (unsigned)feed);
+                        } else {
                             mpg_motion_revoke(&mpg_lease);
+                            ESP_LOGE("MPG", "intent rejected: command output failed");
+                        }
                     } else if (admitted == MPG_MOTION_EXPIRED) {
                         mpg_stop_uart();
+                        reject_reason = "motion_lease_expired";
+                    } else {
+                        reject_reason = deadman ? "motion_admission_denied" :
+                                                 "deadman_released";
                     }
+                } else {
+                    reject_reason = fresh ? "invalid_jog_parameters" :
+                                            "grbl_state_stale_or_not_idle";
                 }
                 xSemaphoreGive(mpg_mutex);
+            } else {
+                reject_reason = !trusted ? "untrusted_peer" :
+                    packet.payload_len != 8 ? "invalid_payload_length" :
+                    tcp_server_get_client_count() != 0 ? "other_controller_connected" :
+                    !serial_uart_tx_idle() ? "uart_busy" : "motion_state_unavailable";
+            }
+            if (reject_reason) {
+                ESP_LOGW("MPG", "intent rejected reason=%s MAC=" MACSTR
+                    " session=0x%08lX seq=%u", reject_reason,
+                    MAC2STR(packet.mac), (unsigned long)packet.session_id,
+                    (unsigned)packet.seq);
             }
 #endif
+            remember_sequence(&packet, result);
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_JOG_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;
