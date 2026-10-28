@@ -23,7 +23,7 @@ class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     CSS = """
     Screen { layout: vertical; }
-    #status { height: 1; padding: 0 1; }
+    #status { height: 2; padding: 0 1; }
     #panels { height: 1fr; }
     .panel { width: 1fr; border: round $accent; }
     .panel-title { height: 1; text-style: bold; padding: 0 1; }
@@ -58,6 +58,8 @@ class ConsoleApp(App):
         self.radio_log_lines = {"S3": 0, "C3": 0}
         self.grbl_status: str | None = None
         self.grbl_status_host_ns: int | None = None
+        self.s3_input_status: tuple[str, str, str] | None = None
+        self.s3_input_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
         self.mpg_s3_submissions = 0
@@ -126,11 +128,18 @@ class ConsoleApp(App):
         grbl_state = "unverified"
         if self.grbl_status_host_ns is not None:
             grbl_state = self.grbl_status if is_fresh(self.grbl_status_host_ns, time.monotonic_ns()) else "stale"
+        input_status = "unreported"
+        if self.s3_input_status_host_ns is not None:
+            if not is_fresh(self.s3_input_status_host_ns,
+                            time.monotonic_ns(), max_age_ns=30_000_000_000):
+                input_status = "stale"
+            else:
+                input_status = "/".join(self.s3_input_status)
         self.query_one("#status", Static).update(
             f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
             f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)    "
-            f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
-            f"GRBL {grbl_state} (from C3 status log only)")
+            f"Radio S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
+            f"Inputs {input_status}    GRBL {grbl_state} (from C3 status log only)")
 
     def drain_events(self) -> None:
         while True:
@@ -156,6 +165,18 @@ class ConsoleApp(App):
                 self.counts[role] += 1
                 event = Event.from_line(role, item["line"],
                     monotonic_ns=item.get("host_monotonic_ns"), wall_time=item.get("host_time"))
+                if (role == "S3" and event.fields.get("event") == "runtime" and
+                        event.fields.get("input_backend") in ("disabled", "configured") and
+                        event.fields.get("input_validity") in
+                        ("unknown", "valid", "invalid") and
+                        event.fields.get("selector_validity") in
+                        ("unknown", "valid", "invalid")):
+                    self.s3_input_status = (
+                        event.fields["input_backend"],
+                        event.fields["input_validity"],
+                        event.fields["selector_validity"],
+                    )
+                    self.s3_input_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
                     self.radio_log_lines[role] += 1
                 elif event.category in ("error", "safety"):

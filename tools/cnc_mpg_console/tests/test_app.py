@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from cnc_mpg_console.app import ConsoleApp
 
@@ -66,4 +67,37 @@ def test_mpg_trace_matches_s3_submission_to_c3_proposal_by_session_and_sequence(
             assert app.mpg_c3_proposals == 1
             assert app.mpg_matched == 1
             assert "matched session/seq=1" in str(app.query_one("#mpg-trace").render())
+    asyncio.run(scenario())
+
+
+def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "event=runtime input_backend=configured "
+                        "input_validity=valid selector_validity=valid",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.drain_events()
+            assert app.s3_input_status is None
+
+            observed_at = time.monotonic_ns()
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=runtime input_backend=disabled "
+                        "input_validity=unknown selector_validity=unknown",
+                "host_monotonic_ns": observed_at,
+            })
+            app.drain_events()
+            app.refresh_status()
+            assert app.s3_input_status == ("disabled", "unknown", "unknown")
+            assert "Inputs disabled/unknown/unknown" in str(
+                app.query_one("#status").render())
+
+            app.s3_input_status_host_ns = time.monotonic_ns() - 31_000_000_000
+            app.refresh_status()
+            assert "Inputs stale" in str(app.query_one("#status").render())
+
     asyncio.run(scenario())
