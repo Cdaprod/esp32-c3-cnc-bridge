@@ -68,7 +68,7 @@ class ConsoleApp(App):
         self.s3_input_status_host_ns: int | None = None
         self.s3_touch_status: tuple[str, str, str, str, str, str] | None = None
         self.s3_touch_status_host_ns: int | None = None
-        self.s3_loop_status: tuple[str, str] | None = None
+        self.s3_loop_status: tuple[str, ...] | None = None
         self.s3_loop_status_host_ns: int | None = None
         self.recent: deque[Event] = deque(maxlen=2000)
         self.paused_events: deque[Event] = deque(maxlen=2000)
@@ -184,8 +184,13 @@ class ConsoleApp(App):
                             max_age_ns=30_000_000_000):
                 loop_status = "stale"
             else:
-                work_ms, overruns = self.s3_loop_status
-                loop_status = f"work={work_ms}ms overruns={overruns}/10s"
+                work_ms, overruns, *phase_ms = self.s3_loop_status
+                labels = ("input", "touch", "transport", "wifi", "display", "mirror")
+                slowest_index = max(range(len(phase_ms)),
+                                    key=lambda index: int(phase_ms[index]))
+                loop_status = (f"work={work_ms}ms overruns={overruns}/10s "
+                               f"slowest={labels[slowest_index]}:"
+                               f"{phase_ms[slowest_index]}ms")
         radio_status = []
         now_ns = time.monotonic_ns()
         for role in ("S3", "C3"):
@@ -225,10 +230,14 @@ class ConsoleApp(App):
                 compact_touch = "stale"
             else:
                 polls, active, reads, busy, irq_idle, errors = self.s3_touch_status
-                work_ms, overruns = self.s3_loop_status
+                work_ms, overruns, *phase_ms = self.s3_loop_status
+                labels = ("input", "touch", "transport", "wifi", "display", "mirror")
+                slowest_index = max(range(len(phase_ms)),
+                                    key=lambda index: int(phase_ms[index]))
                 compact_touch = (f"p={polls} a={active} r={reads} b={busy} "
                                  f"i={irq_idle} e={errors} app={work_ms}ms "
-                                 f"ov={overruns}/10s")
+                                 f"ov={overruns}/10s "
+                                 f"{labels[slowest_index]}={phase_ms[slowest_index]}ms")
             compact_radio = []
             now_ns = time.monotonic_ns()
             for role in ("S3", "C3"):
@@ -327,7 +336,11 @@ class ConsoleApp(App):
                     self.s3_touch_status = tuple(
                         event.fields[field] for field in touch_fields)
                     self.s3_touch_status_host_ns = event.host_monotonic_ns
-                loop_fields = ("loop_work_ms", "loop_overruns")
+                loop_fields = (
+                    "loop_work_ms", "loop_overruns", "max_input_ms",
+                    "max_touch_ms", "max_transport_ms", "max_wifi_ms",
+                    "max_display_ms", "max_mirror_ms",
+                )
                 if role == "S3" and event.fields.get("event") == "runtime" and all(
                         field in event.fields and event.fields[field].isdigit()
                         for field in loop_fields):
