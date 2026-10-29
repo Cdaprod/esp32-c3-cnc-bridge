@@ -90,6 +90,24 @@ class ConsoleApp(App):
         self.s3_repl_enabled = enable_s3_repl
         self.device_hints = {"S3": s3_port, "C3": c3_port}
 
+    def _loop_summary(self, compact: bool = False) -> str:
+        if self.s3_loop_status is None:
+            return "unreported"
+        work, overruns, maxima, max_loop, totals, sample_count = self.s3_loop_status
+        labels = ("input", "touch", "transport", "wifi", "display", "mirror")
+        max_index = max(range(len(maxima)), key=lambda index: int(maxima[index]))
+        prefix = (f"app={work}ms ov={overruns}/10s" if compact else
+                  f"loop work={work}ms overruns={overruns}/10s")
+        if totals is not None and sample_count:
+            avg_index = max(range(len(totals)),
+                            key=lambda index: int(totals[index]))
+            average = int(totals[avg_index]) / int(sample_count)
+            return (f"{prefix} avg={labels[avg_index]}:{average:.1f}ms "
+                    f"max={labels[max_index]}:{maxima[max_index]}ms "
+                    f"peak-loop={max_loop}ms")
+        return (f"{prefix} slowest={labels[max_index]}:"
+                f"{maxima[max_index]}ms")
+
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("S3 ○ Disconnected    C3 ○ Disconnected    GRBL ○ Unverified", id="status")
@@ -184,13 +202,7 @@ class ConsoleApp(App):
                             max_age_ns=30_000_000_000):
                 loop_status = "stale"
             else:
-                work_ms, overruns, *phase_ms = self.s3_loop_status
-                labels = ("input", "touch", "transport", "wifi", "display", "mirror")
-                slowest_index = max(range(len(phase_ms)),
-                                    key=lambda index: int(phase_ms[index]))
-                loop_status = (f"work={work_ms}ms overruns={overruns}/10s "
-                               f"slowest={labels[slowest_index]}:"
-                               f"{phase_ms[slowest_index]}ms")
+                loop_status = self._loop_summary()
         radio_status = []
         now_ns = time.monotonic_ns()
         for role in ("S3", "C3"):
@@ -230,14 +242,9 @@ class ConsoleApp(App):
                 compact_touch = "stale"
             else:
                 polls, active, reads, busy, irq_idle, errors = self.s3_touch_status
-                work_ms, overruns, *phase_ms = self.s3_loop_status
-                labels = ("input", "touch", "transport", "wifi", "display", "mirror")
-                slowest_index = max(range(len(phase_ms)),
-                                    key=lambda index: int(phase_ms[index]))
                 compact_touch = (f"p={polls} a={active} r={reads} b={busy} "
-                                 f"i={irq_idle} e={errors} app={work_ms}ms "
-                                 f"ov={overruns}/10s "
-                                 f"{labels[slowest_index]}={phase_ms[slowest_index]}ms")
+                                 f"i={irq_idle} e={errors} "
+                                 f"{self._loop_summary(compact=True)}")
             compact_radio = []
             now_ns = time.monotonic_ns()
             for role in ("S3", "C3"):
@@ -344,8 +351,27 @@ class ConsoleApp(App):
                 if role == "S3" and event.fields.get("event") == "runtime" and all(
                         field in event.fields and event.fields[field].isdigit()
                         for field in loop_fields):
-                    self.s3_loop_status = tuple(event.fields[field]
-                                                for field in loop_fields)
+                    maxima = tuple(event.fields[field] for field in loop_fields[2:])
+                    total_fields = (
+                        "total_input_ms", "total_touch_ms",
+                        "total_transport_ms", "total_wifi_ms",
+                        "total_display_ms", "total_mirror_ms",
+                    )
+                    profile_loops = event.fields.get("profile_loops", "0")
+                    max_loop = event.fields.get("max_loop_work_ms", "0")
+                    has_totals = (
+                        profile_loops.isdigit() and int(profile_loops) > 0 and
+                        max_loop.isdigit() and all(
+                            field in event.fields and event.fields[field].isdigit()
+                            for field in total_fields))
+                    totals = (tuple(event.fields[field] for field in total_fields)
+                              if has_totals else None)
+                    self.s3_loop_status = (
+                        event.fields["loop_work_ms"],
+                        event.fields["loop_overruns"], maxima,
+                        max_loop, totals,
+                        profile_loops if has_totals else "0",
+                    )
                     self.s3_loop_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
                     self.radio_log_lines[role] += 1
