@@ -106,6 +106,14 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
     return n > 0 && (size_t)n < capacity;
 }
 
+bool mpg_motion_axis_allowed(char axis, bool physical_motion,
+                             bool allow_a_axis_motion)
+{
+    if (axis == 'X' || axis == 'Y' || axis == 'Z') return true;
+    if (axis == 'A') return !physical_motion || allow_a_axis_motion;
+    return false;
+}
+
 mpg_output_result_t mpg_motion_output_command(const char *command,
     bool dry_run, mpg_uart_writer_t uart_writer,
     mpg_dry_run_logger_t dry_run_logger, void *context)

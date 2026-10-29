@@ -39,6 +39,9 @@
 /* Missing configuration must not compile in the MPG command path. */
 #define MPG_DRY_RUN 0
 #endif
+#ifndef CONFIG_MPG_ALLOW_A_AXIS_MOTION
+#define CONFIG_MPG_ALLOW_A_AXIS_MOTION 0
+#endif
 /* Configured using idf.py menuconfig, not firmware-source substitutions. */
 #if MPG_ENABLE_MOTION || MPG_DRY_RUN
 static uint8_t mpg_trusted_peer[6] = {0};
@@ -868,6 +871,12 @@ static void espnow_rx_task(void *pvParameters)
                 const uint16_t feed = (uint16_t)packet.payload[6] |
                                       ((uint16_t)packet.payload[7] << 8);
                 char cmd[64];
+                const bool physical_motion =
+                    MPG_ENABLE_MOTION && !MPG_DRY_RUN;
+                if (!mpg_motion_axis_allowed(axis, physical_motion,
+                        CONFIG_MPG_ALLOW_A_AXIS_MOTION))
+                    reject_reason = axis == 'A' ? "a_axis_not_verified" :
+                                                  "unsupported_axis";
                 const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
                 xSemaphoreTake(mpg_mutex, portMAX_DELAY);
                 const bool fresh_idle =
@@ -885,11 +894,11 @@ static void espnow_rx_task(void *pvParameters)
 #if MPG_ENABLE_MOTION && !MPG_DRY_RUN
                 bool newly_claimed_uart = false;
                 bool uart_owner_ready = serial_uart_mpg_owned();
-                if (!uart_owner_ready && !mpg_lease.active) {
+                if (!reject_reason && !uart_owner_ready && !mpg_lease.active) {
                     uart_owner_ready = serial_uart_mpg_claim();
                     newly_claimed_uart = uart_owner_ready;
                 }
-                if (!uart_owner_ready)
+                if (!reject_reason && !uart_owner_ready)
                     reject_reason = "controller_uart_owned";
 #endif
                 if (!reject_reason && fresh && mpg_motion_format_jog(cmd, sizeof(cmd), axis,

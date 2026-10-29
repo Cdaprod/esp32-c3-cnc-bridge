@@ -37,6 +37,10 @@ For a reproducible disarmed dry-run build, keep `CONFIG_MPG_ENABLE_MOTION=n`, ke
    specification](https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md#jogging),
    [upstream G-code axis parser](https://github.com/gnea/grbl/blob/master/grbl/gcode.c),
    and [Doesbot's published GRBL 1.1 settings](https://www.doesbot.com/2025/11/21/grbl-v1-1-configuration/).
+   The C3 enforces this boundary: dry-run may report an A-axis proposal, but
+   physical A-axis output requires the explicit
+   `CONFIG_MPG_ALLOW_A_AXIS_MOTION=y` Kconfig opt-in. It is off by default and
+   depends on motion being enabled.
 
 ## Bench verification order
 - First run CI host unit tests and full ESP-IDF build with motion disabled.

@@ -6,6 +6,14 @@ assert "#define MPG_DRY_RUN 0" in source, \
        "missing dry-run configuration must compile the MPG path out"
 assert "#define MPG_DRY_RUN 1" not in source, \
        "missing configuration must not silently enable MPG diagnostics"
+assert "#define CONFIG_MPG_ALLOW_A_AXIS_MOTION 0" in source, \
+       "unverified A-axis physical motion must default to rejected"
+axis_gate = source.index("if (!mpg_motion_axis_allowed(axis, physical_motion,")
+axis_format = source.index("mpg_motion_format_jog(cmd, sizeof(cmd), axis,", axis_gate)
+uart_claim = source.index("serial_uart_mpg_claim()", axis_gate)
+assert axis_gate < uart_claim < axis_format, \
+       "axis verification must precede UART ownership, formatting, and admission"
+assert '"a_axis_not_verified"' in source
 start = source.index("        case ESPNOW_MSG_UART_COMMAND: {", source.index("static void espnow_rx_task(void *pvParameters)\n{"))
 end = source.index("        case ESPNOW_MSG_HEARTBEAT:", start)
 handler = source[start:end]

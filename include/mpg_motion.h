@@ -69,6 +69,9 @@ void mpg_motion_sequence_result(mpg_motion_sequence_t *state,
 /* Strict input to GRBL $J parser; no embedded newline or arbitrary G-code. */
 bool mpg_motion_format_jog(char *output, size_t capacity,
     char axis, int32_t distance_microns, uint16_t feed_mm_min);
+/* Keep OEM-specific A-axis jogs out of physical UART mode until verified. */
+bool mpg_motion_axis_allowed(char axis, bool physical_motion,
+                             bool allow_a_axis_motion);
 
 /* Dry-run never falls back to the UART writer when its logger is absent/fails. */
 mpg_output_result_t mpg_motion_output_command(const char *command,

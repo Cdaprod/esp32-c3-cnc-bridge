@@ -46,3 +46,4 @@ jobs:
           idf.py -D SDKCONFIG=sdkconfig.mpg-uart-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-uart-ci.defaults build
           grep -q '^CONFIG_MPG_ENABLE_MOTION=y$' sdkconfig.mpg-uart-ci
           grep -q '^# CONFIG_MPG_DRY_RUN is not set$' sdkconfig.mpg-uart-ci
+          grep -q '^# CONFIG_MPG_ALLOW_A_AXIS_MOTION is not set$' sdkconfig.mpg-uart-ci
