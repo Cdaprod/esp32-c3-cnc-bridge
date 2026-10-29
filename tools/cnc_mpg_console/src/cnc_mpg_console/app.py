@@ -91,6 +91,7 @@ class ConsoleApp(App):
         self._filter_timer = None
         self._event_drain_timer = None
         self._status_refresh_timer = None
+        self._last_status_text: str | None = None
         self.filter_text = ""
         self.paused = False
         self.recorder: Recorder | None = None
@@ -315,7 +316,7 @@ class ConsoleApp(App):
                     age_s = max(0, now_ns - observed_ns) / 1_000_000_000
                     compact_radio.append(
                         f"{role}={fields['state']}({age_s:.0f}s)")
-            status.update(
+            status_text = (
                 f"S3 {s3} {self.states['S3']} {self.counts['S3']}L/{self.errors['S3']}E  "
                 f"C3 {c3} {self.states['C3']} {self.counts['C3']}L/{self.errors['C3']}E\n"
                 f"Inputs {compact_inputs}\n"
@@ -326,7 +327,7 @@ class ConsoleApp(App):
         else:
             status.styles.height = 6
             self.query_one("#timeline").styles.height = 8
-            status.update(
+            status_text = (
                 f"S3 {s3} {self.states['S3']} ({self.counts['S3']} lines, {self.errors['S3']} errors)    "
                 f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
                 f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
@@ -335,6 +336,9 @@ class ConsoleApp(App):
                 f"Touch S3 {touch_status} | loop {loop_status}\n"
                 f"Radio last observed: {' | '.join(radio_status)}\n"
                 f"Machine telemetry {telemetry_status}")
+        if status_text != self._last_status_text:
+            status.update(status_text)
+            self._last_status_text = status_text
 
     def drain_events(self) -> None:
         # Ignore a queued timer callback once the screen has begun unmounting.

@@ -11,6 +11,23 @@ def test_console_refreshes_events_and_status_at_low_latency_intervals():
     assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.1
 
 
+def test_status_panel_only_renders_when_its_observed_text_changes(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            status = app.query_one("#status")
+            with patch.object(status, "update", wraps=status.update) as update:
+                app.refresh_status()
+                app.refresh_status()
+                assert update.call_count == 1
+
+                app.grbl_status = "Idle"
+                app.grbl_status_host_ns = time.monotonic_ns()
+                app.refresh_status()
+                assert update.call_count == 2
+    asyncio.run(scenario())
+
+
 def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
