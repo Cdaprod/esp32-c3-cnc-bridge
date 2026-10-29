@@ -24,7 +24,7 @@ from .serial_reader import SerialReader
 class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
     EVENT_DRAIN_INTERVAL = 0.02
-    STATUS_REFRESH_INTERVAL = 0.2
+    STATUS_REFRESH_INTERVAL = 0.1
     CSS = """
     Screen { layout: vertical; }
     #status { height: 6; padding: 0 1; }
@@ -69,6 +69,9 @@ class ConsoleApp(App):
         self.grbl_telemetry: dict[str, str] | None = None
         self.s3_input_status: tuple[str, str, str, str, str, str, str] | None = None
         self.s3_input_status_host_ns: int | None = None
+        self.s3_button_states: dict[str, str] = {}
+        self.s3_display_status: tuple[str, str] | None = None
+        self.s3_display_status_host_ns: int | None = None
         self.s3_touch_status: tuple[str, str, str, str, str, str] | None = None
         self.s3_touch_status_host_ns: int | None = None
         self.s3_loop_status: tuple[str, ...] | None = None
@@ -215,6 +218,16 @@ class ConsoleApp(App):
                 input_status = (f"{backend}/{inputs}/{selectors} axis={axis} "
                                 f"selector={position} "
                                 f"step={increment} deadman={deadman}")
+                if self.s3_button_states:
+                    input_status += f" buttons={self._button_summary()}"
+        display_status = "unreported"
+        if self.s3_display_status_host_ns is not None:
+            if not is_fresh(self.s3_display_status_host_ns,
+                            time.monotonic_ns(), max_age_ns=30_000_000_000):
+                display_status = "stale"
+            else:
+                screen, page = self.s3_display_status
+                display_status = f"{screen}/{page}"
         telemetry_status = "unreported"
         if self.grbl_status_host_ns is not None:
             if not is_fresh(self.grbl_status_host_ns, time.monotonic_ns()):
@@ -272,10 +285,13 @@ class ConsoleApp(App):
                 backend, inputs, selectors, axis, position, increment, deadman = self.s3_input_status
                 compact_inputs = (f"{backend}:{inputs}/{selectors} ax={axis} "
                                   f"sel={position} inc={increment} dm={deadman}")
+                if self.s3_button_states:
+                    compact_inputs += f" btn={self._button_summary()}"
                 if not is_fresh(self.s3_input_status_host_ns,
                                 time.monotonic_ns(),
                                 max_age_ns=30_000_000_000):
                     compact_inputs = "stale"
+            compact_display = display_status
             if self.s3_touch_status is None or self.s3_loop_status is None:
                 compact_touch = "unreported"
             elif (not is_fresh(self.s3_touch_status_host_ns,
@@ -303,6 +319,7 @@ class ConsoleApp(App):
                 f"S3 {s3} {self.states['S3']} {self.counts['S3']}L/{self.errors['S3']}E  "
                 f"C3 {c3} {self.states['C3']} {self.counts['C3']}L/{self.errors['C3']}E\n"
                 f"Inputs {compact_inputs}\n"
+                f"Display {compact_display}\n"
                 f"Touch/loop {compact_touch}\n"
                 f"Radio {' '.join(compact_radio)}\n"
                 f"GRBL {grbl_state} | Machine {telemetry_status}")
@@ -314,6 +331,7 @@ class ConsoleApp(App):
                 f"C3 {c3} {self.states['C3']} ({self.counts['C3']} lines, {self.errors['C3']} errors)\n"
                 f"Radio log lines S3/C3 {self.radio_log_lines['S3']}/{self.radio_log_lines['C3']}    "
                 f"Inputs {input_status}    GRBL {grbl_state} (C3 status log)\n"
+                f"Display {display_status}\n"
                 f"Touch S3 {touch_status} | loop {loop_status}\n"
                 f"Radio last observed: {' | '.join(radio_status)}\n"
                 f"Machine telemetry {telemetry_status}")
@@ -379,6 +397,25 @@ class ConsoleApp(App):
                         event.fields["deadman"],
                     )
                     self.s3_input_status_host_ns = event.host_monotonic_ns
+                if role == "S3":
+                    self._update_s3_live_inputs(event)
+                if role == "S3" and event.fields.get("event") == "runtime":
+                    screen = event.fields.get("screen", "")
+                    page = event.fields.get("page", "")
+                    if all(value and len(value) <= 32 and value.isascii() and
+                           all(char.isalnum() or char in "_-" for char in value)
+                           for value in (screen, page)):
+                        self.s3_display_status = (screen, page)
+                        self.s3_display_status_host_ns = event.host_monotonic_ns
+                if (role == "S3" and
+                        event.fields.get("event") == "display_navigation"):
+                    screen = event.fields.get("screen", "")
+                    page = event.fields.get("page", "")
+                    if all(value and len(value) <= 32 and value.isascii() and
+                           all(char.isalnum() or char in "_-" for char in value)
+                           for value in (screen, page)):
+                        self.s3_display_status = (screen, page)
+                        self.s3_display_status_host_ns = event.host_monotonic_ns
                 touch_fields = (
                     "touch_polls", "touch_active_samples", "touch_i2c_reads",
                     "touch_i2c_busy", "touch_irq_idle", "touch_errors",
@@ -450,6 +487,63 @@ class ConsoleApp(App):
         self._flush_render_buffer()
         if self._mpg_trace_dirty:
             self._refresh_mpg_trace()
+
+    def _update_s3_live_inputs(self, event: Event) -> None:
+        """Reflect observed S3 input transitions without waiting for runtime heartbeat."""
+        fields = event.fields
+        kind = fields.get("event")
+        if kind not in ("selector_state", "input_validity", "input_state"):
+            return
+        current = list(self.s3_input_status or
+                       ("unreported", "unknown", "unknown", "unknown",
+                        "unknown", "unknown", "unknown"))
+        if kind == "selector_state":
+            allowed = {
+                "axis": {"OFF", "X", "Y", "Z", "A", "invalid", "unknown", "unavailable"},
+                "selector_position": {"OFF", "X", "Y", "Z", "4", "5", "6", "invalid", "unknown", "unavailable"},
+                "increment": {"X1", "X10", "X100", "invalid", "unknown", "unavailable"},
+            }
+            for field, value_set in allowed.items():
+                value = fields.get(field)
+                if value in value_set:
+                    current[{"axis": 3, "selector_position": 4,
+                             "increment": 5}[field]] = value
+            current[0] = "configured"
+        elif kind == "input_validity":
+            domain = fields.get("domain")
+            raw_valid = fields.get("valid", "").lower()
+            if raw_valid not in ("true", "false"):
+                return
+            if domain == "hardware":
+                current[1] = "valid" if raw_valid == "true" else "invalid"
+            elif domain == "selectors":
+                current[2] = "valid" if raw_valid == "true" else "invalid"
+            else:
+                return
+            current[0] = "configured"
+        else:
+            name = fields.get("input", "")
+            active = fields.get("active", "").lower()
+            if active not in ("true", "false"):
+                return
+            state = "active" if active == "true" else "inactive"
+            if name == "deadman":
+                current[6] = state
+            elif name == "estop_observe":
+                self.s3_button_states[name] = state
+            elif (name.startswith("button_") and len(name) <= 40 and
+                  all(char.isalnum() or char == "_" for char in name)):
+                self.s3_button_states[name] = state
+            else:
+                return
+            current[0] = "configured"
+        self.s3_input_status = tuple(current)
+        self.s3_input_status_host_ns = event.host_monotonic_ns
+
+    def _button_summary(self) -> str:
+        return ",".join(
+            f"{name.removeprefix('button_')}={state}"
+            for name, state in sorted(self.s3_button_states.items()))
 
     def _add_event(self, event: Event) -> None:
         self._track_mpg_correlation(event)

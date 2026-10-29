@@ -8,7 +8,7 @@ from textual.widgets import RichLog
 
 def test_console_refreshes_events_and_status_at_low_latency_intervals():
     assert ConsoleApp.EVENT_DRAIN_INTERVAL == 0.02
-    assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.2
+    assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.1
 
 
 def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
@@ -239,7 +239,8 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
                 "line": "[event] event=runtime input_backend=disabled "
                         "input_validity=unknown selector_validity=unknown "
                         "axis=unknown selector_position=unknown "
-                        "increment=unknown deadman=unknown",
+                        "increment=unknown deadman=unknown "
+                        "screen=MAIN_MENU page=CONFIGURATION",
                 "host_monotonic_ns": observed_at,
             })
             app.drain_events()
@@ -248,6 +249,9 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
                 "disabled", "unknown", "unknown", "unknown", "unknown",
                 "unknown", "unknown")
             assert "Inputs disabled/unknown/unknown axis=unknown selector=unknown step=unknown deadman=unknown" in str(
+                app.query_one("#status").render())
+            assert app.s3_display_status == ("MAIN_MENU", "CONFIGURATION")
+            assert "Display MAIN_MENU/CONFIGURATION" in str(
                 app.query_one("#status").render())
 
             observed_at = time.monotonic_ns()
@@ -266,8 +270,51 @@ def test_s3_input_health_uses_explicit_runtime_event_and_expires(tmp_path):
                 app.query_one("#status").render())
 
             app.s3_input_status_host_ns = time.monotonic_ns() - 31_000_000_000
+            app.s3_display_status_host_ns = time.monotonic_ns() - 31_000_000_000
             app.refresh_status()
             assert "Inputs stale" in str(app.query_one("#status").render())
+            assert "Display stale" in str(app.query_one("#status").render())
+
+    asyncio.run(scenario())
+
+
+def test_s3_live_input_and_display_events_update_before_runtime_heartbeat(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            observed_at = time.monotonic_ns()
+            lines = (
+                "[event] event=input_validity domain=hardware valid=True reason=none",
+                "[event] event=input_validity domain=selectors valid=True reason=none",
+                "[event] event=selector_state axis=A selector_position=4 increment=X10",
+                "[event] event=input_state input=deadman active=True",
+                "[event] event=input_state input=button_select active=True",
+                "[event] event=display_navigation screen=MAIN_MENU page=JOBS",
+            )
+            for line in lines:
+                app.bus.put_nowait({
+                    "kind": "line", "source": "S3", "line": line,
+                    "host_monotonic_ns": observed_at,
+                })
+            app.drain_events()
+            app.refresh_status()
+
+            assert app.s3_input_status == (
+                "configured", "valid", "valid", "A", "4", "X10", "active")
+            assert app.s3_button_states == {"button_select": "active"}
+            assert app.s3_display_status == ("MAIN_MENU", "JOBS")
+            status = str(app.query_one("#status").render())
+            assert "axis=A selector=4 step=X10 deadman=active" in status
+            assert "buttons=select=active" in status
+            assert "Display MAIN_MENU/JOBS" in status
+
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=input_state input=deadman active=false",
+                "host_monotonic_ns": time.monotonic_ns(),
+            })
+            app.drain_events()
+            assert app.s3_input_status[-1] == "inactive"
 
     asyncio.run(scenario())
 
