@@ -93,7 +93,7 @@ class ConsoleApp(App):
     def _loop_summary(self, compact: bool = False) -> str:
         if self.s3_loop_status is None:
             return "unreported"
-        work, overruns, maxima, max_loop, totals, sample_count = self.s3_loop_status
+        work, overruns, maxima, max_loop, totals, sample_count, display_parts = self.s3_loop_status
         labels = ("input", "touch", "transport", "wifi", "display", "mirror")
         max_index = max(range(len(maxima)), key=lambda index: int(maxima[index]))
         prefix = (f"app={work}ms ov={overruns}/10s" if compact else
@@ -102,9 +102,15 @@ class ConsoleApp(App):
             avg_index = max(range(len(totals)),
                             key=lambda index: int(totals[index]))
             average = int(totals[avg_index]) / int(sample_count)
+            detail = ""
+            if display_parts is not None:
+                model, update, refresh = (
+                    int(value) / int(sample_count) for value in display_parts)
+                detail = (f" draw={model:.1f}/{update:.1f}/{refresh:.1f}ms"
+                          f"(model/update/refresh)")
             return (f"{prefix} avg={labels[avg_index]}:{average:.1f}ms "
                     f"max={labels[max_index]}:{maxima[max_index]}ms "
-                    f"peak-loop={max_loop}ms")
+                    f"peak-loop={max_loop}ms{detail}")
         return (f"{prefix} slowest={labels[max_index]}:"
                 f"{maxima[max_index]}ms")
 
@@ -366,11 +372,21 @@ class ConsoleApp(App):
                             for field in total_fields))
                     totals = (tuple(event.fields[field] for field in total_fields)
                               if has_totals else None)
+                    display_part_fields = (
+                        "total_display_model_ms", "total_display_update_ms",
+                        "total_display_refresh_ms",
+                    )
+                    display_parts = (
+                        tuple(event.fields[field] for field in display_part_fields)
+                        if has_totals and all(
+                            field in event.fields and event.fields[field].isdigit()
+                            for field in display_part_fields) else None)
                     self.s3_loop_status = (
                         event.fields["loop_work_ms"],
                         event.fields["loop_overruns"], maxima,
                         max_loop, totals,
                         profile_loops if has_totals else "0",
+                        display_parts,
                     )
                     self.s3_loop_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":

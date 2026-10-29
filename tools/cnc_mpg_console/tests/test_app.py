@@ -250,7 +250,7 @@ def test_s3_loop_work_and_overruns_are_summarized_and_expire(tmp_path):
             app.refresh_status()
             assert app.s3_loop_status == (
                 "3", "2", ("2", "0", "1", "9", "4", "0"),
-                "0", None, "0")
+                "0", None, "0", None)
             assert "loop work=3ms overruns=2/10s slowest=wifi:9ms" in str(
                 app.query_one("#status").render())
 
@@ -272,12 +272,16 @@ def test_s3_loop_profile_uses_window_average_and_peak(tmp_path):
                         "max_touch_ms=0 max_transport_ms=1 max_wifi_ms=9 "
                         "max_display_ms=4 max_mirror_ms=0 total_input_ms=20 "
                         "total_touch_ms=0 total_transport_ms=10 total_wifi_ms=25 "
-                        "total_display_ms=80 total_mirror_ms=0",
+                        "total_display_ms=80 total_mirror_ms=0 "
+                        "total_display_model_ms=30 total_display_update_ms=40 "
+                        "total_display_refresh_ms=10",
                 "host_monotonic_ns": time.monotonic_ns(),
             })
             app.drain_events()
             app.refresh_status()
             assert "avg=display:8.0ms max=wifi:9ms peak-loop=50ms" in str(
+                app.query_one("#status").render())
+            assert "draw=3.0/4.0/1.0ms(model/update/refresh)" in str(
                 app.query_one("#status").render())
 
     asyncio.run(scenario())
