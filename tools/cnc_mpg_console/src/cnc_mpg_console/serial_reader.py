@@ -12,6 +12,8 @@ import serial
 from .devices import choose_device, discover_devices
 
 MAX_SERIAL_LINE_BYTES = 8192
+SERIAL_READ_TIMEOUT_S = 0.01
+MAX_SERIAL_READ_BYTES = 512
 
 
 def dtr_for_role(source: str) -> bool:
@@ -73,7 +75,8 @@ class SerialReader(threading.Thread):
                 # before it reports serial_connected and delivers stdout.
                 # Keep C3's USB Serial/JTAG controls deasserted to avoid reset.
                 # exclusive=True prevents a second POSIX process owning a port.
-                stream = serial.Serial(baudrate=self.baud, timeout=0.1,
+                stream = serial.Serial(baudrate=self.baud,
+                                       timeout=SERIAL_READ_TIMEOUT_S,
                                        write_timeout=0.2, exclusive=True,
                                        dsrdtr=False, rtscts=False)
                 stream.dtr = dtr_for_role(self.source)
@@ -96,7 +99,14 @@ class SerialReader(threading.Thread):
                                 stream.write(self.write_queue.get_nowait())
                         except queue.Empty:
                             pass
-                        chunk = stream.read(512)
+                        # Reading a large fixed length with a long timeout can
+                        # hold short log lines for the whole timeout. Drain
+                        # only bytes already buffered; when idle, wait for one
+                        # byte with a short bounded timeout instead of spinning.
+                        available = stream.in_waiting
+                        read_size = min(max(1, available),
+                                        MAX_SERIAL_READ_BYTES)
+                        chunk = stream.read(read_size)
                         if not chunk:
                             continue
                         pending.extend(chunk)
