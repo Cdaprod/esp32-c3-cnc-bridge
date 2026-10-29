@@ -31,6 +31,14 @@ jobs:
           idf.py -D SDKCONFIG=sdkconfig.mpg-dryrun-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-dryrun.defaults build
           grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig.mpg-dryrun-ci
           grep -q '^# CONFIG_MPG_ENABLE_MOTION is not set$' sdkconfig.mpg-dryrun-ci
+      - name: Compile fully disabled MPG configuration
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-disabled-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-disabled.defaults build
+          grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig.mpg-disabled-ci
+          grep -q '^# CONFIG_MPG_ENABLE_MOTION is not set$' sdkconfig.mpg-disabled-ci
+          grep -q '^# CONFIG_MPG_DRY_RUN is not set$' sdkconfig.mpg-disabled-ci
       - name: Compile explicitly gated UART motion path (CI only; never flash)
         shell: bash
         run: |
