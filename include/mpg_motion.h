@@ -81,4 +81,6 @@ mpg_output_result_t mpg_motion_output_command(const char *command,
  * explicitly enabled; diagnostic builds must not affect another UART owner. */
 mpg_output_result_t mpg_motion_output_cancel(bool allow_physical_output,
     mpg_realtime_writer_t writer, void *context);
+/* Map physical cancel outcome to the one-byte MPG_STOP_ACK result. */
+uint8_t mpg_motion_stop_ack_result(mpg_output_result_t result);
 #endif

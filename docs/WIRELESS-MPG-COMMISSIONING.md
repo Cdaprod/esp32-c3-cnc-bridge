@@ -4,6 +4,18 @@ Companion pendant implementation: [pendant PR #22](https://github.com/Cdaprod/lo
 
 ## What is implemented
 - ESP-NOW v1 pairing and sequenced binary `MPG_JOG` / `MPG_STOP` with one-byte ACKs.
+- `MPG_STOP_ACK` result `0` means output failed, `1` means GRBL's realtime
+  cancel byte was written, and `2` means the stop was consumed and the MPG
+  lease revoked while physical UART output was suppressed by a disarmed/dry-run
+  build. Result `2` does not prove the machine stopped. The packet shape and
+  protocol version are unchanged; older S3 firmware treats result `2` as
+  unconfirmed and remains inhibited.
+- C3 serial diagnostics emit `event=mpg_stop` with session and sequence for a
+  sent `0x85`, an explicitly suppressed output (`physical_uart=not_sent`), or
+  a failed write. The dashboard classifies suppression and failure as safety
+  events; a suppressed ACK only releases the S3's local stop latch so a
+  non-actuating diagnostic session can continue. Normal controller freshness,
+  deadman, selector, and C3 admission checks still gate every subsequent jog.
 - Dedicated 8-byte jog payload: ASCII X/Y/Z/A, deadman flag, signed int32 microns LE, uint16 feed mm/min LE. The S3 manufacturer map labels selector contact `4` as the 4th/A axis; positions `5` and `6` remain configured as UI functions on the current S3 profile.
 - GRBL 1.1 status query `?` every 250 ms, strict full-line parser, and <250 ms freshness gate before any jog.
 - Native C receiver ownership lease with 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`. MPG sequence state is bound to the paired sender MAC and active session; duplicate and stale jog packets remain rejected after the lease is revoked or expires.

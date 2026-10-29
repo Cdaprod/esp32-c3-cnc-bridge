@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "mpg_motion.h"
+#include "espnow_protocol.h"
 
 typedef struct {
     unsigned uart_calls;
@@ -133,6 +134,11 @@ int main(void)
     assert(mpg_motion_output_cancel(true, NULL, &probe) ==
            MPG_OUTPUT_FAILED);
     assert(probe.cancel_calls == 1);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_SENT) == ESPNOW_RESULT_OK);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_SUPPRESSED) ==
+           ESPNOW_RESULT_SUPPRESSED);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_FAILED) ==
+           ESPNOW_RESULT_ERROR);
     puts("mpg_motion tests passed");
     return 0;
 }

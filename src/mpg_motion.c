@@ -1,4 +1,5 @@
 #include "mpg_motion.h"
+#include "espnow_protocol.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -136,4 +137,11 @@ mpg_output_result_t mpg_motion_output_cancel(bool allow_physical_output,
     if (!allow_physical_output) return MPG_OUTPUT_SUPPRESSED;
     if (!writer || writer(0x85, context) != 1) return MPG_OUTPUT_FAILED;
     return MPG_OUTPUT_SENT;
+}
+
+uint8_t mpg_motion_stop_ack_result(mpg_output_result_t result)
+{
+    if (result == MPG_OUTPUT_SENT) return ESPNOW_RESULT_OK;
+    if (result == MPG_OUTPUT_SUPPRESSED) return ESPNOW_RESULT_SUPPRESSED;
+    return ESPNOW_RESULT_ERROR;
 }
