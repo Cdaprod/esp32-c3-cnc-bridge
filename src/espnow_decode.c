@@ -15,8 +15,10 @@ static bool valid_type_length(uint8_t type, uint16_t payload_len)
     case ESPNOW_MSG_SENSOR_ASSIGNMENT: return payload_len == 1;
     case ESPNOW_MSG_MPG_JOG: return payload_len == 8;
     case ESPNOW_MSG_MPG_STOP: return payload_len == 0;
+    case ESPNOW_MSG_MPG_FEED_HOLD: return payload_len == 0;
     case ESPNOW_MSG_MPG_JOG_ACK:
     case ESPNOW_MSG_MPG_STOP_ACK:
+    case ESPNOW_MSG_MPG_FEED_HOLD_ACK:
     case ESPNOW_MSG_UART_ACK: return payload_len == 1;
     case ESPNOW_MSG_UART_COMMAND:
     case ESPNOW_MSG_UART_RESPONSE:
