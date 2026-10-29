@@ -131,6 +131,9 @@ def test_uart_activity_telemetry_keeps_direction_counts_and_hides_payloads():
     rx = Event.from_line(
         "C3", "I (9011) SERIAL_HANDLER: event=uart_rx source=uart0 "
         "result=observed chunks=4 bytes=92 window_ms=1001")
+    tx_window = Event.from_line(
+        "C3", "I (9011) SERIAL_HANDLER: event=uart_tx source=uart0 "
+        "result=accepted chunks=2 bytes=40 window_ms=1002")
     tx = Event.from_line(
         "C3", "I (9012) MPG: event=uart_tx operation=mpg_jog "
         "source=uart0 result=accepted bytes=24 session=123 seq=7")
@@ -138,6 +141,9 @@ def test_uart_activity_telemetry_keeps_direction_counts_and_hides_payloads():
     assert rx.category == "controller"
     assert (rx.fields["chunks"], rx.fields["bytes"], rx.fields["window_ms"]) == (
         "4", "92", "1001")
+    assert tx_window.category == "controller"
+    assert tx_window.fields["result"] == "accepted"
+    assert tx_window.fields["bytes"] == "40"
     assert tx.category == "controller"
     assert tx.correlation_key == "123:7"
     assert tx.fields["operation"] == "mpg_jog"
