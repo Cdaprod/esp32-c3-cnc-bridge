@@ -21,6 +21,35 @@ static mpg_uart_arbiter_t mpg_uart_arbiter;
 static portMUX_TYPE mpg_uart_arbiter_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t mpg_uart_rejections;
 static uint32_t mpg_uart_last_rejection_log_ms;
+static uint32_t uart_rx_chunks_window;
+static uint32_t uart_rx_bytes_window;
+static uint32_t uart_rx_window_started_ms;
+static uint32_t uart_tx_chunks_window;
+static uint32_t uart_tx_bytes_window;
+static uint32_t uart_tx_window_started_ms;
+
+static void log_uart_activity(bool transmit, int length)
+{
+    if (length <= 0) return;
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t *chunks = transmit ? &uart_tx_chunks_window : &uart_rx_chunks_window;
+    uint32_t *bytes = transmit ? &uart_tx_bytes_window : &uart_rx_bytes_window;
+    uint32_t *started = transmit ? &uart_tx_window_started_ms : &uart_rx_window_started_ms;
+    (*chunks)++;
+    *bytes += (uint32_t)length;
+    if (*started == 0) {
+        *started = now_ms;
+        return;
+    }
+    const uint32_t elapsed_ms = (uint32_t)(now_ms - *started);
+    if (elapsed_ms < 1000) return;
+    ESP_LOGI(TAG, "event=uart_%s source=uart0 result=observed chunks=%lu bytes=%lu window_ms=%lu",
+             transmit ? "tx" : "rx", (unsigned long)*chunks,
+             (unsigned long)*bytes, (unsigned long)elapsed_ms);
+    *chunks = 0;
+    *bytes = 0;
+    *started = now_ms;
+}
 
 bool serial_uart_tx_idle(void)
 {
@@ -239,6 +268,7 @@ static void uart_tx_task(void *pvParameters) {
                 if (written < 0 || written != data->length) {
                     ESP_LOGW(TAG, "Scrittura UART incompleta: %d/%d", written, data->length);
                 } else {
+                    log_uart_activity(true, written);
                     esp_err_t err = uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(100));
                     if (err != ESP_OK) {
                         ESP_LOGW(TAG, "Timeout/errore attesa TX UART: %s", esp_err_to_name(err));
@@ -272,6 +302,7 @@ static void serial_read_task(void *pvParameters) {
         uart_data_t *data = NULL;
         if (serial_get_data(&data, pdMS_TO_TICKS(10))) {
             if (data && data->data && data->length > 0) {
+                log_uart_activity(false, data->length);
                 // COPIA per ESP-NOW
                 uart_data_t *espnow_data = allocate_buffer();
                 if (espnow_data) {
