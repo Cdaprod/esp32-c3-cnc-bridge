@@ -79,6 +79,10 @@ def classify_line(line: str) -> str:
         return "lifecycle"
     if "event=application_exception" in text:
         return "error"
+    if re.search(r"\bevent=mpg_stop\b", text):
+        if "result=suppressed" in text or "result=failed" in text:
+            return "safety"
+        return "controller"
     if "event=grbl_jog_ack" in text:
         return "controller" if "result=accepted" in text else "safety"
     if "event=motion_admission" in text:

@@ -68,6 +68,17 @@ def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line(
         "W (103) MPG: event=motion_admission result=rejected "
         "reason=deadman_released session=3 seq=11") == "safety"
+
+
+def test_mpg_stop_telemetry_distinguishes_sent_from_suppressed_uart_output():
+    assert classify_line(
+        "I (104) MPG: event=mpg_stop result=sent physical_uart=0x85 "
+        "session=3 seq=12") == "controller"
+    suppressed = Event.from_line(
+        "C3", "W (105) MPG: event=mpg_stop result=suppressed "
+        "physical_uart=not_sent mode=dry_run lease=revoked session=3 seq=13")
+    assert suppressed.category == "safety"
+    assert suppressed.fields["physical_uart"] == "not_sent"
     assert classify_line(
         "I (104) MPG: event=motion_admission result=accepted seq=12") == "safety"
     assert classify_line("I (102) GRBL: event=uart_tx operation=mpg_jog seq=9") == "controller"
