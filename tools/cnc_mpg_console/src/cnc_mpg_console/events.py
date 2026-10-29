@@ -120,6 +120,8 @@ def classify_line(line: str) -> str:
             "event=encoder_overrun" in text or
             ("event=input_validity" in text and "valid=false" in text)):
         return "safety"
+    if re.search(r"\bevent=uart_tx\b", text):
+        return "controller"
     if re.search(r"\bevent=dry_run\b", text):
         return "dry-run" if "result=proposed" in text else "log"
     if "dry_run" in text or "dry-run" in text:
