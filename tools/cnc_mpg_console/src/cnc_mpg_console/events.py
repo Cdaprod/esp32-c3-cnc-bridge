@@ -85,6 +85,14 @@ def classify_line(line: str) -> str:
         if "result=suppressed" in text or "result=failed" in text:
             return "safety"
         return "controller"
+    if re.search(r"\bevent=mpg_feed_hold\b", text):
+        if "result=rejected" in text:
+            return "safety"
+        if "result=dry_run_proposed" in text or "physical_uart=not_sent" in text:
+            return "dry-run"
+        return "controller"
+    if re.search(r"\bevent=motion_rearm\b", text):
+        return "controller"
     if "event=grbl_jog_ack" in text:
         return "controller" if "result=accepted" in text else "safety"
     if "event=motion_admission" in text:
