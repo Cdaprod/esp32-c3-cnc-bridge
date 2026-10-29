@@ -3,7 +3,14 @@
 Companion pendant implementation: [pendant PR #22](https://github.com/Cdaprod/lolin-s2-mini-cnc-mpg-pendant-controller/pull/22).
 
 ## What is implemented
-- ESP-NOW v1 pairing and sequenced binary `MPG_JOG` / `MPG_STOP` with one-byte ACKs.
+- ESP-NOW v1 pairing and sequenced binary `MPG_JOG`, `MPG_STOP`, and
+  `MPG_FEED_HOLD` with one-byte acknowledgments. `MPG_STOP` remains jog-cancel
+  (`0x85`); `MPG_FEED_HOLD` is a separate request for GRBL's realtime `!` byte.
+- Feed hold is an explicit, trusted-peer/session/sequence-checked controller
+  action. The default dry-run build logs `byte=0x21 physical_uart=not_sent`
+  and returns result `2`; only an explicitly motion-enabled, non-dry-run build
+  can pass it through the shared UART ownership gate. It does not provide a
+  safety-rated stop. Remote resume/reset remains disabled on the S3↔C3 path.
 - `MPG_STOP_ACK` result `0` means output failed, `1` means GRBL's realtime
   cancel byte was written, and `2` means the stop was consumed and the MPG
   lease revoked while physical UART output was suppressed by a disarmed/dry-run

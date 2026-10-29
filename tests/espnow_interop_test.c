@@ -26,6 +26,25 @@ static bool dry_run_sink(const char *command, void *context)
 
 int main(void)
 {
+    /* S3 feed hold is a distinct empty-payload request, not jog cancel. */
+    const uint8_t feed_hold_frame[] = {
+        0x01,0x34,0x78,0x56,0x34,0x12,0x02,0x01,0x00,0x00
+    };
+    espnow_decoded_packet_t feed_hold_packet;
+    assert(espnow_decode_frame(feed_hold_frame, sizeof(feed_hold_frame),
+                               (const uint8_t[]){0x02,1,2,3,4,5},
+                               &feed_hold_packet));
+    assert(feed_hold_packet.type == ESPNOW_MSG_MPG_FEED_HOLD);
+    assert(feed_hold_packet.session_id == 0x12345678);
+    assert(feed_hold_packet.seq == 0x0102 &&
+           feed_hold_packet.payload_len == 0);
+    const uint8_t bad_feed_hold_frame[] = {
+        0x01,0x34,0x78,0x56,0x34,0x12,0x02,0x01,0x01,0x00,0x21
+    };
+    assert(!espnow_decode_frame(bad_feed_hold_frame,
+        sizeof(bad_feed_hold_frame), (const uint8_t[]){0x02,1,2,3,4,5},
+        &feed_hold_packet));
+
     /* Golden S3 vector from tests/test_c3_mpg_wire.py. */
     const uint8_t frame[] = {
         0x01,0x30,0x78,0x56,0x34,0x12,0x00,0x01,0x08,0x00,

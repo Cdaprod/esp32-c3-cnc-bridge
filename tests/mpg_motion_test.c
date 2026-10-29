@@ -120,6 +120,11 @@ int main(void)
     assert(mpg_motion_output_command(cmd, true, probe_uart, NULL,
                                      &probe) == MPG_OUTPUT_FAILED);
     assert(probe.uart_calls == 0);
+    probe.log_success = true;
+    assert(mpg_motion_output_command("!", true, probe_uart, probe_logger,
+                                     &probe) == MPG_OUTPUT_DRY_RUN);
+    assert(probe.uart_calls == 0 && probe.log_calls == 3);
+    assert(strcmp(probe.logged, "!") == 0);
     assert(mpg_motion_output_command(cmd, false, probe_uart, probe_logger,
                                      &probe) == MPG_OUTPUT_SENT);
     assert(probe.uart_calls == 1);

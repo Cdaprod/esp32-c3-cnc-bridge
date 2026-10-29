@@ -75,9 +75,16 @@ typedef struct {
     uint16_t feed;
 } mpg_dry_run_log_context_t;
 
+typedef struct {
+    uint32_t session_id;
+    uint16_t sequence;
+} mpg_control_log_context_t;
+
 static mpg_motion_lease_t mpg_lease = {0};
 static mpg_grbl_status_t mpg_grbl = {0};
 static mpg_grbl_ack_t mpg_pending_grbl_ack = {0};
+static bool mpg_rearm_wait_idle = false;
+static uint32_t mpg_rearm_after_ms = 0;
 static SemaphoreHandle_t mpg_mutex = NULL;
 static char mpg_line[128];
 static size_t mpg_line_len = 0;
@@ -94,9 +101,14 @@ static int mpg_uart_cancel_writer(uint8_t cancel, void *context)
 
 static mpg_output_result_t mpg_stop_uart(void)
 {
-    return mpg_motion_output_cancel(
+    mpg_output_result_t result = mpg_motion_output_cancel(
         MPG_ENABLE_MOTION && !MPG_DRY_RUN,
         mpg_uart_cancel_writer, NULL);
+    if (result == MPG_OUTPUT_SENT) {
+        mpg_rearm_wait_idle = true;
+        mpg_rearm_after_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    }
+    return result;
 }
 
 static int mpg_uart_writer(const char *command, size_t length, void *context)
@@ -132,6 +144,18 @@ static bool mpg_dry_run_logger(const char *command, void *context)
     return true;
 }
 
+#if MPG_DRY_RUN
+static bool mpg_feed_hold_dry_run_logger(const char *command, void *context)
+{
+    if (!command || strcmp(command, "!") != 0) return false;
+    const mpg_control_log_context_t *event = context;
+    if (!event) return false;
+    ESP_LOGI("MPG", "event=mpg_feed_hold result=dry_run_proposed byte=0x21 physical_uart=not_sent session=%lu seq=%u",
+        (unsigned long)event->session_id, (unsigned)event->sequence);
+    return true;
+}
+#endif
+
 static void mpg_telemetry_ingest(const uint8_t *data, int len)
 {
     if (!data || len <= 0 || !mpg_mutex) return;
@@ -143,8 +167,15 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
         const char c = (char)data[i];
         if (c == '\n' || c == '\r') {
             if (!mpg_line_overflow && mpg_line_len) {
-                mpg_grbl_status_parse(&mpg_grbl, mpg_line, mpg_line_len,
-                                     (uint32_t)(esp_timer_get_time() / 1000));
+                const uint32_t line_time_ms =
+                    (uint32_t)(esp_timer_get_time() / 1000);
+                const bool valid_status = mpg_grbl_status_parse(
+                    &mpg_grbl, mpg_line, mpg_line_len, line_time_ms);
+                if (valid_status && mpg_rearm_wait_idle && mpg_grbl.idle &&
+                    (uint32_t)(line_time_ms - mpg_rearm_after_ms) >= 250) {
+                    mpg_rearm_wait_idle = false;
+                    ESP_LOGI("MPG", "event=motion_rearm result=idle_status_after_stop");
+                }
                 if (completion == MPG_GRBL_ACK_NONE)
                     completion = mpg_grbl_ack_consume_line(
                         &mpg_pending_grbl_ack, mpg_line, mpg_line_len,
@@ -890,7 +921,8 @@ static void espnow_rx_task(void *pvParameters)
                     mpg_grbl.seen && !mpg_grbl.alarm &&
                     (uint32_t)(now - mpg_grbl.updated_ms) <= 250 &&
                     strncmp(mpg_grbl.line, "<Jog|", 5) == 0;
-                const bool fresh = fresh_idle || owned_jog;
+                const bool fresh = (fresh_idle || owned_jog) &&
+                    !mpg_rearm_wait_idle;
 #if MPG_ENABLE_MOTION && !MPG_DRY_RUN
                 bool newly_claimed_uart = false;
                 bool uart_owner_ready = serial_uart_mpg_owned();
@@ -962,12 +994,16 @@ static void espnow_rx_task(void *pvParameters)
                         serial_uart_mpg_release();
                         reject_reason = "motion_lease_expired";
                     } else {
-                        reject_reason = deadman ? "motion_admission_denied" :
-                                                 "deadman_released";
+                        reject_reason = mpg_rearm_wait_idle ?
+                            "post_stop_idle_required" : deadman ?
+                            "motion_admission_denied" :
+                            "deadman_released";
                     }
                 } else {
                     if (!reject_reason)
-                        reject_reason = fresh ? "invalid_jog_parameters" :
+                        reject_reason = mpg_rearm_wait_idle ?
+                            "post_stop_idle_required" : fresh ?
+                            "invalid_jog_parameters" :
                                                 "grbl_state_stale_or_not_idle";
                 }
 #if MPG_ENABLE_MOTION && !MPG_DRY_RUN
@@ -1036,6 +1072,91 @@ static void espnow_rx_task(void *pvParameters)
                          (unsigned)packet.seq);
             }
             send_simple_message(packet.mac, ESPNOW_MSG_MPG_STOP_ACK,
+                                packet.session_id, packet.seq, &result, 1);
+            break;
+        }
+
+        case ESPNOW_MSG_MPG_FEED_HOLD: {
+            uint8_t result = ESPNOW_RESULT_ERROR;
+            uint8_t duplicate_result = ESPNOW_RESULT_ERROR;
+            if (peer_accepts_mpg_sequence(&packet, &duplicate_result)) {
+                send_simple_message(packet.mac,
+                    ESPNOW_MSG_MPG_FEED_HOLD_ACK, packet.session_id,
+                    packet.seq, &duplicate_result, 1);
+                break;
+            }
+#if MPG_ENABLE_MOTION || MPG_DRY_RUN
+            const bool trusted = mpg_trusted_ready &&
+                memcmp(packet.mac, mpg_trusted_peer, 6) == 0;
+            const char *reject_reason = NULL;
+            if (!trusted)
+                reject_reason = "untrusted_peer";
+            else if (tcp_server_get_client_count() != 0)
+                reject_reason = "other_controller_connected";
+            else if (!serial_uart_tx_idle())
+                reject_reason = "uart_busy";
+            else if (!mpg_mutex)
+                reject_reason = "motion_state_unavailable";
+
+            if (!reject_reason) {
+                mpg_grbl_ack_t cancelled_ack = {0};
+                mpg_grbl_ack_result_t pending_cancelled = MPG_GRBL_ACK_NONE;
+                xSemaphoreTake(mpg_mutex, portMAX_DELAY);
+                pending_cancelled = mpg_grbl_ack_cancel(
+                    &mpg_pending_grbl_ack, &cancelled_ack);
+                mpg_motion_revoke(&mpg_lease);
+#if MPG_ENABLE_MOTION && !MPG_DRY_RUN
+                /* Claiming the shared arbiter prevents a concurrent TCP
+                 * writer from racing this one-byte GRBL realtime command. */
+                if (!serial_uart_mpg_claim()) {
+                    reject_reason = "uart_busy";
+                } else {
+                    const mpg_output_result_t output =
+                        mpg_motion_output_command("!", false,
+                            mpg_uart_writer, NULL, NULL);
+                    serial_uart_mpg_release();
+                    if (output == MPG_OUTPUT_SENT) {
+                        result = ESPNOW_RESULT_OK;
+                        mpg_rearm_wait_idle = true;
+                        mpg_rearm_after_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                        ESP_LOGI("MPG", "event=mpg_feed_hold result=uart_write_accepted byte=0x21 session=%lu seq=%u",
+                            (unsigned long)packet.session_id,
+                            (unsigned)packet.seq);
+                    } else {
+                        reject_reason = "command_output_failed";
+                    }
+                }
+#elif MPG_DRY_RUN
+                const mpg_control_log_context_t dry_run_event = {
+                    .session_id = packet.session_id,
+                    .sequence = packet.seq,
+                };
+                if (mpg_motion_output_command("!", true, mpg_uart_writer,
+                        mpg_feed_hold_dry_run_logger,
+                        (void *)&dry_run_event) ==
+                        MPG_OUTPUT_DRY_RUN)
+                    result = ESPNOW_RESULT_SUPPRESSED;
+                else
+                    reject_reason = "dry_run_log_failed";
+#else
+                reject_reason = "motion_disabled";
+#endif
+                xSemaphoreGive(mpg_mutex);
+                if (pending_cancelled != MPG_GRBL_ACK_NONE)
+                    mpg_finish_grbl_ack(&cancelled_ack,
+                        pending_cancelled, 0, false);
+            }
+            if (reject_reason) {
+                ESP_LOGW("MPG", "event=mpg_feed_hold result=rejected reason=%s session=%lu seq=%u",
+                    reject_reason, (unsigned long)packet.session_id,
+                    (unsigned)packet.seq);
+            }
+#else
+            ESP_LOGW("MPG", "event=mpg_feed_hold result=rejected reason=motion_disabled session=%lu seq=%u",
+                (unsigned long)packet.session_id, (unsigned)packet.seq);
+#endif
+            remember_sequence(&packet, result);
+            send_simple_message(packet.mac, ESPNOW_MSG_MPG_FEED_HOLD_ACK,
                                 packet.session_id, packet.seq, &result, 1);
             break;
         }
