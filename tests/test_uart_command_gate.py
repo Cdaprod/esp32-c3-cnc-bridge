@@ -2,6 +2,10 @@
 from pathlib import Path
 
 source = Path("src/espnow_handler.c").read_text()
+assert "#define MPG_DRY_RUN 0" in source, \
+       "missing dry-run configuration must compile the MPG path out"
+assert "#define MPG_DRY_RUN 1" not in source, \
+       "missing configuration must not silently enable MPG diagnostics"
 start = source.index("        case ESPNOW_MSG_UART_COMMAND: {", source.index("static void espnow_rx_task(void *pvParameters)\n{"))
 end = source.index("        case ESPNOW_MSG_HEARTBEAT:", start)
 handler = source[start:end]

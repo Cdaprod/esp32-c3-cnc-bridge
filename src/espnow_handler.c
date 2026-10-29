@@ -36,8 +36,8 @@
 #if defined(CONFIG_MPG_DRY_RUN)
 #define MPG_DRY_RUN CONFIG_MPG_DRY_RUN
 #else
-/* Missing configuration is fail-closed: command output remains dry-run. */
-#define MPG_DRY_RUN 1
+/* Missing configuration must not compile in the MPG command path. */
+#define MPG_DRY_RUN 0
 #endif
 /* Configured using idf.py menuconfig, not firmware-source substitutions. */
 #if MPG_ENABLE_MOTION || MPG_DRY_RUN
