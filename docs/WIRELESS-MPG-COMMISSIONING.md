@@ -17,7 +17,7 @@ Companion pendant implementation: [pendant PR #22](https://github.com/Cdaprod/lo
   non-actuating diagnostic session can continue. Normal controller freshness,
   deadman, selector, and C3 admission checks still gate every subsequent jog.
 - Dedicated 8-byte jog payload: ASCII X/Y/Z/A, deadman flag, signed int32 microns LE, uint16 feed mm/min LE. The S3 manufacturer map labels selector contact `4` as the 4th/A axis; positions `5` and `6` remain configured as UI functions on the current S3 profile.
-- GRBL 1.1 status query `?` every 250 ms, strict full-line parser, and <250 ms freshness gate before any jog.
+- GRBL 1.1 status query `?` every 250 ms, strict full-line parser, and <250 ms freshness gate before any jog. The parser preserves the documented `Hold:0/1` and `Door:0..3` substates; only a fresh `Idle` report authorizes the dry-run admission check.
 - Native C receiver ownership lease with 250 ms expiry, 25 ms watchdog tick and GRBL real-time jog cancel `0x85`. MPG sequence state is bound to the paired sender MAC and active session; duplicate and stale jog packets remain rejected after the lease is revoked or expires.
 - Unrestricted v1/legacy ESP-NOW raw UART forwarding disabled.
 - New radio peers receive framed UART_RESPONSE chunks; old clients continue receiving raw responses.

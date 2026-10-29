@@ -15,17 +15,32 @@ bool mpg_grbl_status_parse(mpg_grbl_status_t *out, const char *line,
     const char *separator = memchr(state, '|', length - 2);
     if (!separator) return false;
     size_t state_len = (size_t)(separator - state);
-    bool idle = state_len == 4 && memcmp(state, "Idle", 4) == 0;
-    bool alarm = state_len == 5 && memcmp(state, "Alarm", 5) == 0;
-    bool known = idle || alarm ||
-                 (state_len == 3 && memcmp(state, "Jog", 3) == 0) ||
-                 (state_len == 3 && memcmp(state, "Run", 3) == 0) ||
-                 (state_len == 4 && memcmp(state, "Hold", 4) == 0) ||
-                 (state_len == 5 && memcmp(state, "Check", 5) == 0) ||
-                 (state_len == 4 && memcmp(state, "Door", 4) == 0) ||
-                 (state_len == 4 && memcmp(state, "Home", 4) == 0) ||
-                 (state_len == 5 && memcmp(state, "Sleep", 5) == 0);
+    const char *substate = memchr(state, ':', state_len);
+    size_t base_len = substate ? (size_t)(substate - state) : state_len;
+    const bool idle = base_len == 4 && memcmp(state, "Idle", 4) == 0;
+    const bool alarm = base_len == 5 && memcmp(state, "Alarm", 5) == 0;
+    const bool hold = base_len == 4 && memcmp(state, "Hold", 4) == 0;
+    const bool door = base_len == 4 && memcmp(state, "Door", 4) == 0;
+    const bool known = idle || alarm ||
+                 (base_len == 3 && memcmp(state, "Jog", 3) == 0) ||
+                 (base_len == 3 && memcmp(state, "Run", 3) == 0) ||
+                 hold ||
+                 (base_len == 5 && memcmp(state, "Check", 5) == 0) ||
+                 door ||
+                 (base_len == 4 && memcmp(state, "Home", 4) == 0) ||
+                 (base_len == 5 && memcmp(state, "Sleep", 5) == 0);
     if (!known) return false;
+    /* GRBL v1.1 reports Hold:0/1 and Door:0..3 substates. Preserve the
+     * complete state text, but validate the suffix before refreshing status. */
+    if (substate) {
+        if (substate + 2 != state + state_len || substate[1] < '0' ||
+            substate[1] > '9')
+            return false;
+        const char code = substate[1];
+        if ((hold && code > '1') || (door && code > '3') ||
+            (!hold && !door))
+            return false;
+    }
     memcpy(out->line, line, length);
     out->line[length] = '\0';
     out->seen = true;
