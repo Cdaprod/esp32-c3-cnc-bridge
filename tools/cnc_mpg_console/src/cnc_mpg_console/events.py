@@ -71,6 +71,14 @@ class Event:
 def classify_line(line: str) -> str:
     """Classify only what a log line says; never infer missing device telemetry."""
     text = line.lower()
+    # CircuitPython uses ReloadException as ordinary control flow for a
+    # requested soft reload. Keep it visible as lifecycle activity without
+    # inflating the dashboard's error count. A separately reported application
+    # exception is a real fault and must remain prominent.
+    if "event=application_reload" in text:
+        return "lifecycle"
+    if "event=application_exception" in text:
+        return "error"
     if "event=grbl_jog_ack" in text:
         return "controller" if "result=accepted" in text else "safety"
     if "event=motion_admission" in text:

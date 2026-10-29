@@ -37,6 +37,15 @@ def test_lines_without_available_telemetry_are_generic():
     assert classify_line("Controller offline") == "controller"
 
 
+def test_circuitpython_reload_is_lifecycle_but_application_exception_is_error():
+    reload_event = Event.from_line(
+        "S3", "[event] event=application_reload type=ReloadException")
+    exception_event = Event.from_line(
+        "S3", "[event] event=application_exception type=ValueError reason=bad")
+    assert reload_event.category == "lifecycle"
+    assert exception_event.category == "error"
+
+
 def test_esp_idf_severity_prevents_timeout_fields_from_counting_as_errors():
     # This exact informational Wi-Fi diagnostic was misclassified in a live
     # C3 capture because the field name bcn_timeout contains "timeout".
