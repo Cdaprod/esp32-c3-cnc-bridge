@@ -93,11 +93,20 @@ class ConsoleApp(App):
     def _loop_summary(self, compact: bool = False) -> str:
         if self.s3_loop_status is None:
             return "unreported"
-        work, overruns, maxima, max_loop, totals, sample_count, display_parts = self.s3_loop_status
+        (work, overruns, maxima, max_loop, totals, sample_count,
+         display_parts, loop_hz, poll_avg_us, unprofiled_avg_us) = self.s3_loop_status
         labels = ("input", "touch", "transport", "wifi", "display", "mirror")
         max_index = max(range(len(maxima)), key=lambda index: int(maxima[index]))
-        prefix = (f"app={work}ms ov={overruns}/10s" if compact else
-                  f"loop work={work}ms overruns={overruns}/10s")
+        rate = (f"{loop_hz}Hz/{int(poll_avg_us) / 1000:.1f}ms"
+                if int(loop_hz) > 0 else "rate unreported")
+        if int(loop_hz) > 0:
+            prefix = (f"loop={rate} app={work}ms ov={overruns}/10s"
+                      if compact else
+                      f"loop rate={rate} work={work}ms "
+                      f"overruns={overruns}/10s")
+        else:
+            prefix = (f"app={work}ms ov={overruns}/10s" if compact else
+                      f"loop work={work}ms overruns={overruns}/10s")
         if totals is not None and sample_count:
             avg_index = max(range(len(totals)),
                             key=lambda index: int(totals[index]))
@@ -108,7 +117,10 @@ class ConsoleApp(App):
                     int(value) / int(sample_count) for value in display_parts)
                 detail = (f" draw={model:.1f}/{update:.1f}/{refresh:.1f}ms"
                           f"(model/update/refresh)")
-            return (f"{prefix} avg={labels[avg_index]}:{average:.1f}ms "
+            residual = (f" unprofiled={int(unprofiled_avg_us) / 1000:.1f}ms"
+                        if int(loop_hz) > 0 else "")
+            return (f"{prefix} avg={labels[avg_index]}:{average:.1f}ms"
+                    f"{residual} "
                     f"max={labels[max_index]}:{maxima[max_index]}ms "
                     f"peak-loop={max_loop}ms{detail}")
         return (f"{prefix} slowest={labels[max_index]}:"
@@ -387,6 +399,12 @@ class ConsoleApp(App):
                         max_loop, totals,
                         profile_loops if has_totals else "0",
                         display_parts,
+                        event.fields.get("loop_hz", "0")
+                        if event.fields.get("loop_hz", "0").isdigit() else "0",
+                        event.fields.get("poll_avg_us", "0")
+                        if event.fields.get("poll_avg_us", "0").isdigit() else "0",
+                        event.fields.get("unprofiled_avg_us", "0")
+                        if event.fields.get("unprofiled_avg_us", "0").isdigit() else "0",
                     )
                     self.s3_loop_status_host_ns = event.host_monotonic_ns
                 if event.category == "radio":
