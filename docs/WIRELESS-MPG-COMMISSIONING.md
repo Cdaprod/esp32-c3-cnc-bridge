@@ -23,6 +23,16 @@ For a reproducible disarmed dry-run build, keep `CONFIG_MPG_ENABLE_MOTION=n`, ke
 6. The current sender MAC and firmware settings do not support safe multi-machine auto-arming. Require explicit disarmed machine selection.
 7. ESP-NOW channel must match actual Wi-Fi STA/AP channel, not merely a protocol constant.
 8. Do not expose local Wi-Fi credentials or `include/MyWiFiData.h` changes in commits.
+9. The pendant maps Doesbot selector position 4 to logical axis `A`, and the
+   bridge can format an `A` dry-run proposal. That does **not** establish that
+   the installed controller accepts A-axis jogging: upstream GRBL 1.1 documents
+   `$J=` axis words as XYZ and its parser handles X/Y/Z words only. An OEM
+   Doesbot firmware may extend this, but that capability is unverified. Keep
+   A-axis output in disarmed dry-run until the exact controller firmware or
+   vendor specification confirms A support; do not infer support from the
+   4-axis harness or from the C3 formatter. See the [GRBL 1.1 jog command
+   specification](https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md#jogging)
+   and [upstream G-code axis parser](https://github.com/gnea/grbl/blob/master/grbl/gcode.c).
 
 ## Bench verification order
 - First run CI host unit tests and full ESP-IDF build with motion disabled.
