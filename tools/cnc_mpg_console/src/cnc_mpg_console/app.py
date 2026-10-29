@@ -23,6 +23,8 @@ from .serial_reader import SerialReader
 
 class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
+    EVENT_DRAIN_INTERVAL = 0.02
+    STATUS_REFRESH_INTERVAL = 0.2
     CSS = """
     Screen { layout: vertical; }
     #status { height: 6; padding: 0 1; }
@@ -155,8 +157,8 @@ class ConsoleApp(App):
         if self.s3_repl_enabled:
             repl.add_class("enabled")
             repl.placeholder = "S3 REPL enabled — Enter sends Python to S3 only"
-        self.set_interval(0.05, self.drain_events)
-        self.set_interval(1.0, self.refresh_status)
+        self.set_interval(self.EVENT_DRAIN_INTERVAL, self.drain_events)
+        self.set_interval(self.STATUS_REFRESH_INTERVAL, self.refresh_status)
         for role, port in self.device_hints.items():
             reader = self.readers[role]
             message = (f"Configured port: {port}" if port else

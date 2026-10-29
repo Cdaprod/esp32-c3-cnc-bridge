@@ -6,6 +6,11 @@ from cnc_mpg_console.app import ConsoleApp
 from textual.widgets import RichLog
 
 
+def test_console_refreshes_events_and_status_at_low_latency_intervals():
+    assert ConsoleApp.EVENT_DRAIN_INTERVAL == 0.02
+    assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.2
+
+
 def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
