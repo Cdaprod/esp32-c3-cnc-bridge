@@ -194,6 +194,10 @@ class ConsoleApp(App):
             self.recorder.close()
 
     def refresh_status(self) -> None:
+        # A timer tick may already be queued while Textual is tearing down the
+        # widget tree; status refresh is presentation-only and can safely skip.
+        if not self.query("#status"):
+            return
         for role, reader in self.readers.items():
             self.states[role] = "connected" if reader.connected.is_set() else "disconnected"
         s3 = "●" if self.states["S3"] == "connected" else "○"
@@ -315,6 +319,9 @@ class ConsoleApp(App):
                 f"Machine telemetry {telemetry_status}")
 
     def drain_events(self) -> None:
+        # Ignore a queued timer callback once the screen has begun unmounting.
+        if not self.query("#timeline"):
+            return
         processed = 0
         self._rendering_batch = True
         while processed < 256:
@@ -483,6 +490,8 @@ class ConsoleApp(App):
                 self._refresh_mpg_trace()
 
     def _refresh_mpg_trace(self) -> None:
+        if not self.query("#mpg-trace"):
+            return
         self.query_one("#mpg-trace", Static).update(
             "MPG observed: S3 submissions={} | C3 dry-run proposals={} | "
             "matched session/seq={}".format(
@@ -491,6 +500,10 @@ class ConsoleApp(App):
         self._mpg_trace_dirty = False
 
     def _flush_render_buffer(self) -> None:
+        if not self.query("#timeline"):
+            for lines in self._render_buffer.values():
+                lines.clear()
+            return
         for key, selector in (("S3", "#s3-log"), ("C3", "#c3-log"),
                               ("timeline", "#timeline")):
             lines = self._render_buffer[key]
@@ -541,6 +554,8 @@ class ConsoleApp(App):
             self._filter_timer = self.set_timer(0.12, self._apply_filter)
 
     def _apply_filter(self) -> None:
+        if not self.query("#s3-log"):
+            return
         self.query_one("#s3-log", RichLog).clear()
         self.query_one("#c3-log", RichLog).clear()
         self.query_one("#timeline", RichLog).clear()

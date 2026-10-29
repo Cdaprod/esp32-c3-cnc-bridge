@@ -62,6 +62,19 @@ def test_record_on_start_captures_device_events_from_first_attachment(tmp_path):
     asyncio.run(scenario())
 
 
+def test_queued_ui_callbacks_are_safe_after_widgets_are_removed(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            await app.query_one("#status").remove()
+            await app.query_one("#timeline").remove()
+            app.refresh_status()
+            app.drain_events()
+            app._flush_render_buffer()
+            app._refresh_mpg_trace()
+    asyncio.run(scenario())
+
+
 def test_dashboard_correlates_observed_events_from_both_devices(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
