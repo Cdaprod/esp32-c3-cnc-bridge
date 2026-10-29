@@ -85,11 +85,12 @@ static mpg_grbl_status_t mpg_grbl = {0};
 static mpg_grbl_ack_t mpg_pending_grbl_ack = {0};
 static bool mpg_rearm_wait_idle = false;
 static uint32_t mpg_rearm_after_ms = 0;
+static uint32_t mpg_grbl_status_log_ms = 0;
+static uint32_t mpg_status_query_log_ms = 0;
 static SemaphoreHandle_t mpg_mutex = NULL;
 static char mpg_line[128];
 static size_t mpg_line_len = 0;
 static bool mpg_line_overflow = false;
-static uint32_t mpg_status_log_ms = 0;
 static void mpg_finish_grbl_ack(const mpg_grbl_ack_t *completed,
                                 mpg_grbl_ack_result_t result,
                                 uint8_t error_code, bool cancel_motion);
@@ -114,9 +115,15 @@ static mpg_output_result_t mpg_stop_uart(void)
 
 static int mpg_uart_writer(const char *command, size_t length, void *context)
 {
-    (void)context;
     if (!serial_uart_mpg_owned()) return -1;
-    return uart_write_bytes(UART_NUM, command, (uint32_t)length);
+    const int written = uart_write_bytes(UART_NUM, command, (uint32_t)length);
+    const mpg_dry_run_log_context_t *event = context;
+    if (event && written == (int)length) {
+        ESP_LOGI("MPG", "event=uart_tx operation=mpg_jog source=uart0 result=accepted bytes=%u session=%lu seq=%u",
+                 (unsigned)length, (unsigned long)event->session_id,
+                 (unsigned)event->sequence);
+    }
+    return written;
 }
 
 static bool mpg_dry_run_logger(const char *command, void *context)
@@ -160,29 +167,24 @@ static bool mpg_feed_hold_dry_run_logger(const char *command, void *context)
 static void mpg_telemetry_ingest(const uint8_t *data, int len)
 {
     if (!data || len <= 0 || !mpg_mutex) return;
-    char status_line[sizeof(mpg_grbl.line)] = {0};
-    bool report_status = false;
     mpg_grbl_ack_t completed = {0};
     mpg_grbl_ack_result_t completion = MPG_GRBL_ACK_NONE;
     uint8_t error_code = 0;
+    char status_log[sizeof(mpg_line)];
+    bool status_log_pending = false;
     xSemaphoreTake(mpg_mutex, portMAX_DELAY);
     for (int i = 0; i < len; ++i) {
         const char c = (char)data[i];
         if (c == '\n' || c == '\r') {
             if (!mpg_line_overflow && mpg_line_len) {
-                const uint32_t now_ms =
+                const uint32_t line_time_ms =
                     (uint32_t)(esp_timer_get_time() / 1000);
                 char previous[sizeof(mpg_grbl.line)];
                 memcpy(previous, mpg_grbl.line, sizeof(previous));
                 previous[sizeof(previous) - 1] = '\0';
                 const bool had_status = mpg_grbl.seen;
                 const bool valid_status = mpg_grbl_status_parse(
-                    &mpg_grbl, mpg_line, mpg_line_len, now_ms);
-                if (valid_status && mpg_rearm_wait_idle && mpg_grbl.idle &&
-                    (uint32_t)(now_ms - mpg_rearm_after_ms) >= 250) {
-                    mpg_rearm_wait_idle = false;
-                    ESP_LOGI("MPG", "event=motion_rearm result=idle_status_after_stop");
-                }
+                    &mpg_grbl, mpg_line, mpg_line_len, line_time_ms);
                 if (valid_status) {
                     const char *old_sep = strchr(previous, '|');
                     const char *new_sep = strchr(mpg_grbl.line, '|');
@@ -194,18 +196,23 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
                         old_state_len != new_state_len ||
                         (new_state_len && memcmp(previous, mpg_grbl.line,
                                                  new_state_len) != 0);
-                    if (state_changed ||
-                        (uint32_t)(now_ms - mpg_status_log_ms) >= 1000) {
-                        memcpy(status_line, mpg_grbl.line, sizeof(status_line));
-                        status_line[sizeof(status_line) - 1] = '\0';
-                        mpg_status_log_ms = now_ms;
-                        report_status = true;
+                    if (state_changed || mpg_grbl_status_log_ms == 0 ||
+                        (uint32_t)(line_time_ms - mpg_grbl_status_log_ms) >= 1000) {
+                        memcpy(status_log, mpg_line, mpg_line_len);
+                        status_log[mpg_line_len] = '\0';
+                        status_log_pending = true;
+                        mpg_grbl_status_log_ms = line_time_ms;
                     }
+                }
+                if (valid_status && mpg_rearm_wait_idle && mpg_grbl.idle &&
+                    (uint32_t)(line_time_ms - mpg_rearm_after_ms) >= 250) {
+                    mpg_rearm_wait_idle = false;
+                    ESP_LOGI("MPG", "event=motion_rearm result=idle_status_after_stop");
                 }
                 if (completion == MPG_GRBL_ACK_NONE)
                     completion = mpg_grbl_ack_consume_line(
                         &mpg_pending_grbl_ack, mpg_line, mpg_line_len,
-                        now_ms,
+                        (uint32_t)(esp_timer_get_time() / 1000),
                         &completed, &error_code);
             }
             mpg_line_len = 0;
@@ -218,9 +225,10 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
         }
     }
     xSemaphoreGive(mpg_mutex);
-    if (report_status)
+    if (status_log_pending) {
         ESP_LOGI("GRBL", "event=grbl_status source=uart0 age_ms=0 line=%s",
-                 status_line);
+                 status_log);
+    }
     if (completion != MPG_GRBL_ACK_NONE)
         mpg_finish_grbl_ack(&completed, completion, error_code,
                             completion != MPG_GRBL_ACK_ACCEPTED);
@@ -230,7 +238,6 @@ static void mpg_watchdog_task(void *unused)
 {
     (void)unused;
     uint32_t last_query_ms = 0;
-    uint32_t last_query_log_ms = 0;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(25));
         if (!mpg_mutex) continue;
@@ -262,11 +269,17 @@ static void mpg_watchdog_task(void *unused)
             mpg_finish_grbl_ack(&completed_ack, ack_result, 0, false);
         if ((uint32_t)(now - last_query_ms) >= 250) {
             const char status_query = '?';
-            uart_write_bytes(UART_NUM, &status_query, 1);
-            last_query_ms = now;
-            if ((uint32_t)(now - last_query_log_ms) >= 1000) {
-                ESP_LOGI("GRBL", "event=uart_tx source=watchdog operation=status_query interval_ms=250 sampled=1");
-                last_query_log_ms = now;
+            const int written = uart_write_bytes(UART_NUM, &status_query, 1);
+            if (written == 1) {
+                last_query_ms = now;
+                if (mpg_status_query_log_ms == 0 ||
+                    (uint32_t)(now - mpg_status_query_log_ms) >= 1000) {
+                    ESP_LOGI("GRBL", "event=uart_tx operation=status_query source=uart0 bytes=1 result=accepted");
+                    mpg_status_query_log_ms = now;
+                }
+            } else {
+                ESP_LOGW("GRBL", "event=uart_tx operation=status_query source=uart0 bytes=1 result=failed");
+                last_query_ms = now;
             }
         }
         if (lease_ended) {
@@ -1000,12 +1013,6 @@ static void espnow_rx_task(void *pvParameters)
                         if (output == MPG_OUTPUT_SENT ||
                             output == MPG_OUTPUT_DRY_RUN) {
                             result = ESPNOW_RESULT_OK;
-                            if (output == MPG_OUTPUT_SENT) {
-                                ESP_LOGI("GRBL", "event=uart_tx operation=mpg_jog session=%lu seq=%u axis=%c microns=%ld feed=%u",
-                                    (unsigned long)packet.session_id,
-                                    (unsigned)packet.seq, axis,
-                                    (long)microns, (unsigned)feed);
-                            }
 #if MPG_ENABLE_MOTION && !MPG_DRY_RUN
                             defer_ack = true;
                             /* Reserve the sequence result before releasing

@@ -21,26 +21,35 @@ static mpg_uart_arbiter_t mpg_uart_arbiter;
 static portMUX_TYPE mpg_uart_arbiter_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t mpg_uart_rejections;
 static uint32_t mpg_uart_last_rejection_log_ms;
-static uint32_t uart_rx_diag_bytes;
-static uint32_t uart_rx_diag_since_ms;
-static uint32_t uart_tx_diag_bytes;
-static uint32_t uart_tx_diag_since_ms;
+static uint32_t uart_rx_chunks_window;
+static uint32_t uart_rx_bytes_window;
+static uint32_t uart_rx_window_started_ms;
+static uint32_t uart_tx_chunks_window;
+static uint32_t uart_tx_bytes_window;
+static uint32_t uart_tx_window_started_ms;
 
-/* Aggregate metadata only; never dump arbitrary controller command bytes. */
-static void log_uart_activity(bool transmit, int byte_count)
+static void log_uart_activity(bool transmit, int length)
 {
+    if (length <= 0) return;
     const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-    uint32_t *total = transmit ? &uart_tx_diag_bytes : &uart_rx_diag_bytes;
-    uint32_t *since = transmit ? &uart_tx_diag_since_ms : &uart_rx_diag_since_ms;
-    *total += (uint32_t)byte_count;
-    if (*since == 0) *since = now_ms;
-    if ((uint32_t)(now_ms - *since) >= 1000) {
-        ESP_LOGI(TAG, "event=uart_%s source=uart0 bytes_window=%lu window_ms=%lu payload=omitted",
-                 transmit ? "tx" : "rx", (unsigned long)*total,
-                 (unsigned long)(now_ms - *since));
-        *total = 0;
-        *since = now_ms;
+    uint32_t *chunks = transmit ? &uart_tx_chunks_window : &uart_rx_chunks_window;
+    uint32_t *bytes = transmit ? &uart_tx_bytes_window : &uart_rx_bytes_window;
+    uint32_t *started = transmit ? &uart_tx_window_started_ms : &uart_rx_window_started_ms;
+    (*chunks)++;
+    *bytes += (uint32_t)length;
+    if (*started == 0) {
+        *started = now_ms;
+        return;
     }
+    const uint32_t elapsed_ms = (uint32_t)(now_ms - *started);
+    if (elapsed_ms < 1000) return;
+    ESP_LOGI(TAG, "event=uart_%s source=uart0 result=%s chunks=%lu bytes=%lu window_ms=%lu",
+             transmit ? "tx" : "rx", transmit ? "accepted" : "observed",
+             (unsigned long)*chunks,
+             (unsigned long)*bytes, (unsigned long)elapsed_ms);
+    *chunks = 0;
+    *bytes = 0;
+    *started = now_ms;
 }
 
 bool serial_uart_tx_idle(void)
@@ -238,7 +247,6 @@ bool serial_get_data(uart_data_t **data, TickType_t wait_time) {
     int len = uart_read_bytes(UART_NUM, uart_data->data, UART_BUF_SIZE, wait_time);
     if (len > 0) {
         uart_data->length = len;
-        log_uart_activity(false, len);
         *data = uart_data;
         return true;
     }
@@ -295,6 +303,7 @@ static void serial_read_task(void *pvParameters) {
         uart_data_t *data = NULL;
         if (serial_get_data(&data, pdMS_TO_TICKS(10))) {
             if (data && data->data && data->length > 0) {
+                log_uart_activity(false, data->length);
                 // COPIA per ESP-NOW
                 uart_data_t *espnow_data = allocate_buffer();
                 if (espnow_data) {
