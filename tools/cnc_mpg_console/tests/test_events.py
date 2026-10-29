@@ -46,6 +46,15 @@ def test_circuitpython_reload_is_lifecycle_but_application_exception_is_error():
     assert exception_event.category == "error"
 
 
+def test_circuitpython_startup_context_is_lifecycle_evidence():
+    event = Event.from_line(
+        "S3", "[event] event=startup_context run_reason=REPL_RELOAD "
+        "safe_mode_reason=NONE reset_reason=POWER_ON serial_connected=true")
+    assert event.category == "lifecycle"
+    assert event.fields["run_reason"] == "REPL_RELOAD"
+    assert event.fields["reset_reason"] == "POWER_ON"
+
+
 def test_esp_idf_severity_prevents_timeout_fields_from_counting_as_errors():
     # This exact informational Wi-Fi diagnostic was misclassified in a live
     # C3 capture because the field name bcn_timeout contains "timeout".

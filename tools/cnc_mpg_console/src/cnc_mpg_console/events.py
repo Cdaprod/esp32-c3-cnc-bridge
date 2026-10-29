@@ -77,6 +77,8 @@ def classify_line(line: str) -> str:
     # exception is a real fault and must remain prominent.
     if "event=application_reload" in text:
         return "lifecycle"
+    if "event=startup_context" in text:
+        return "lifecycle"
     if "event=application_exception" in text:
         return "error"
     if re.search(r"\bevent=mpg_stop\b", text):
