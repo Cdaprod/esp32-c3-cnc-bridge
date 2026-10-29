@@ -10,6 +10,7 @@ from typing import Callable
 
 import serial
 from .devices import choose_device, discover_devices
+from .events import redact_sensitive_text
 
 MAX_SERIAL_LINE_BYTES = 8192
 SERIAL_READ_TIMEOUT_S = 0.01
@@ -111,14 +112,18 @@ class SerialReader(threading.Thread):
                             continue
                         pending.extend(chunk)
                         if len(pending) > MAX_SERIAL_LINE_BYTES and b"\n" not in pending:
-                            prefix = pending[:MAX_SERIAL_LINE_BYTES].decode("utf-8", errors="replace")
+                            prefix = redact_sensitive_text(
+                                pending[:MAX_SERIAL_LINE_BYTES].decode(
+                                    "utf-8", errors="replace"))
                             self._publish("line", line=prefix + " … [unterminated line truncated]")
                             pending.clear()
                         while b"\n" in pending:
                             raw, _, rest = pending.partition(b"\n")
                             pending = bytearray(rest)
                             truncated = len(raw) > MAX_SERIAL_LINE_BYTES
-                            line = raw[:MAX_SERIAL_LINE_BYTES].decode("utf-8", errors="replace").rstrip("\r")
+                            line = redact_sensitive_text(
+                                raw[:MAX_SERIAL_LINE_BYTES].decode(
+                                    "utf-8", errors="replace").rstrip("\r"))
                             if truncated:
                                 line += " … [line truncated]"
                             self.lines += 1

@@ -488,9 +488,9 @@ void app_main(void)
         );
 
         printf(
-            "  [%d] PWD:  %s\n",
+            "  [%d] Password configured: %s\n",
             i,
-            cfg->networks[i].password
+            cfg->networks[i].password[0] ? "yes" : "no"
         );
     }
 
@@ -499,10 +499,8 @@ void app_main(void)
         cfg->ap_ssid
     );
 
-    printf(
-        "AP Password: %s\n",
-        cfg->ap_password
-    );
+    printf("AP Password configured: %s\n",
+           cfg->ap_password[0] ? "yes" : "no");
 
     printf(
         "AP Channel:  %d\n",

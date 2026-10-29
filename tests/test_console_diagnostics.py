@@ -27,4 +27,9 @@ assert "now_ms - *since) >= 1000" in logger
 assert "log_uart_activity(false, len)" in serial
 assert "log_uart_activity(true, written)" in serial
 assert "data->data" not in logger, "USB diagnostics must not expose raw UART bytes"
+
+main = (root / "src/main.c").read_text()
+assert "PWD:  %s" not in main
+assert "AP Password: %s" not in main
+assert "Password configured: %s" in main
 print("C3 console telemetry is validated, rate-limited, and payload-safe")

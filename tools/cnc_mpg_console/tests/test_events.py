@@ -15,6 +15,21 @@ def test_classification_and_fields_are_observed_not_invented():
     assert event.host_time.startswith("2026-01-01T00:00:00")
 
 
+def test_credentials_are_redacted_before_fields_and_json_recording():
+    event = Event.from_line(
+        "C3", '  [0] PWD: secret-one AP Password: "secret-two" token=secret-three')
+    serialized = str(event.to_json())
+    assert "secret-one" not in serialized
+    assert "secret-two" not in serialized
+    assert "secret-three" not in serialized
+    assert event.message.count("[REDACTED]") == 3
+    assert event.fields["token"] == "[REDACTED]"
+
+    json_event = Event.from_line("C3", '{"password":"json-secret"}')
+    assert "json-secret" not in str(json_event.to_json())
+    assert "[REDACTED]" in json_event.message
+
+
 def test_s3_invalid_input_and_encoder_overrun_are_safety_events():
     assert classify_line(
         "[event] event=input_validity domain=selectors valid=False reason=not_one_hot"

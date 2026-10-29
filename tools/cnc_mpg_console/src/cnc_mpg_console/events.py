@@ -12,6 +12,15 @@ from typing import Any
 _FIELD = re.compile(r"\b([a-z][a-z0-9_]*)=([^\s,]+)", re.I)
 _FIRMWARE_TICK = re.compile(r"\b[EWIDV] \((\d+)\)")
 _ESP_IDF_LOG_LEVEL = re.compile(r"^\s*([EWIDV]) \(\d+\)")
+_SENSITIVE_VALUE = re.compile(
+    r"(?i)([\"']?\b(?:password|passwd|pwd|token|secret|api[_-]?key)\b"
+    r"[\"']?\s*[:=]\s*[\"']?)([^\s,;\"'}]+)([\"']?)"
+)
+
+
+def redact_sensitive_text(text: str) -> str:
+    """Mask credential-like values before display, parsing, or recording."""
+    return _SENSITIVE_VALUE.sub(r"\1[REDACTED]\3", str(text))
 
 
 @dataclass(frozen=True)
@@ -28,11 +37,13 @@ class Event:
                   wall_time: datetime | None = None) -> "Event":
         mono = time.monotonic_ns() if monotonic_ns is None else monotonic_ns
         now = datetime.now(timezone.utc) if wall_time is None else wall_time
-        fields = {key.lower(): value for key, value in _FIELD.findall(line)}
-        tick = _FIRMWARE_TICK.search(line)
+        safe_line = redact_sensitive_text(line)
+        fields = {key.lower(): value for key, value in _FIELD.findall(safe_line)}
+        tick = _FIRMWARE_TICK.search(safe_line)
         if tick:
             fields["firmware_tick_ms"] = tick.group(1)
-        return cls(source=source, category=classify_line(line), message=line.rstrip("\r\n"),
+        return cls(source=source, category=classify_line(safe_line),
+                   message=safe_line.rstrip("\r\n"),
                    host_monotonic_ns=mono, host_time=now.isoformat(timespec="milliseconds"),
                    fields=fields)
 

@@ -52,6 +52,36 @@ def test_reader_receives_lines_passively_and_stops_cleanly():
     assert not reader.is_alive()
 
 
+def test_reader_redacts_credentials_before_publishing_serial_lines():
+    master, slave = pty.openpty()
+    bus = queue.Queue(maxsize=100)
+    reader = SerialReader("C3", os.ttyname(slave), 115200, bus)
+    try:
+        reader.start()
+        deadline = time.monotonic() + 2
+        while not reader.connected.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert reader.connected.is_set()
+        os.write(master, b"AP Password: private-value\r\n")
+        deadline = time.monotonic() + 2
+        found = None
+        while time.monotonic() < deadline:
+            try:
+                item = bus.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if item.get("kind") == "line":
+                found = item["line"]
+                break
+        assert found == "AP Password: [REDACTED]"
+        assert "private-value" not in found
+    finally:
+        reader.stop()
+        reader.join(timeout=2)
+        os.close(master)
+        os.close(slave)
+
+
 def test_c3_never_accepts_repl_writes():
     reader = SerialReader("C3", "/dev/null", 115200, queue.Queue(), allow_s3_repl=True)
     assert not reader.allow_s3_repl
