@@ -11,6 +11,7 @@ from typing import Any
 
 _FIELD = re.compile(r"\b([a-z][a-z0-9_]*)=([^\s,]+)", re.I)
 _FIRMWARE_TICK = re.compile(r"\b[EWIDV] \((\d+)\)")
+_ESP_IDF_LOG_LEVEL = re.compile(r"^\s*([EWIDV]) \(\d+\)")
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,8 @@ def classify_line(line: str) -> str:
             "event=encoder_overrun" in text or
             ("event=input_validity" in text and "valid=false" in text)):
         return "safety"
+    if re.search(r"\bevent=dry_run\b", text):
+        return "dry-run" if "result=proposed" in text else "log"
     if "dry_run" in text or "dry-run" in text:
         return "dry-run"
     if "mpg" in text and any(word in text for word in ("reject", "denied", "inhibit", "expired")):
@@ -98,6 +101,16 @@ def classify_line(line: str) -> str:
         return "controller"
     if any(word in text for word in ("touch", "gesture", "encoder", "selector", "input")):
         return "input"
+    # ESP-IDF diagnostic payloads often contain words such as "timeout" in
+    # field names (for example bcn_timeout). Preserve the domain classifications
+    # above, then trust firmware severity instead of incidental substrings.
+    level = _ESP_IDF_LOG_LEVEL.match(line)
+    if level:
+        if level.group(1) == "E":
+            return "error"
+        if level.group(1) == "W":
+            return "warning"
+        return "log"
     if any(word in text for word in ("error", "failed", "fault", "timeout", "rejected")):
         return "error"
     if "[boot]" in text or "[ready]" in text:

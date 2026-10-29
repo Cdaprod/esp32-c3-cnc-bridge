@@ -130,6 +130,26 @@ def test_successful_dry_run_admission_does_not_increment_device_errors(tmp_path)
     asyncio.run(scenario())
 
 
+def test_info_level_timeout_field_does_not_increment_device_error_counter(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "I (8041) wifi:set rx beacon pti, rx_bcn_pti: 0, "
+                        "bcn_timeout: 25000, mt_pti: 0, mt_time: 10000",
+            })
+            app.drain_events()
+            assert app.errors["C3"] == 0
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "E (8043) wifi: operation failed",
+            })
+            app.drain_events()
+            assert app.errors["C3"] == 1
+    asyncio.run(scenario())
+
+
 def test_dry_run_panel_shows_verified_proposed_grbl_command(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)

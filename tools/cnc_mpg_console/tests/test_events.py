@@ -37,6 +37,17 @@ def test_lines_without_available_telemetry_are_generic():
     assert classify_line("Controller offline") == "controller"
 
 
+def test_esp_idf_severity_prevents_timeout_fields_from_counting_as_errors():
+    # This exact informational Wi-Fi diagnostic was misclassified in a live
+    # C3 capture because the field name bcn_timeout contains "timeout".
+    assert classify_line(
+        "I (8041) wifi:set rx beacon pti, rx_bcn_pti: 0, "
+        "bcn_timeout: 25000, mt_pti: 0, mt_time: 10000"
+    ) == "log"
+    assert classify_line("W (8042) wifi: beacon timeout warning") == "warning"
+    assert classify_line("E (8043) wifi: operation failed") == "error"
+
+
 def test_dry_run_does_not_get_reported_as_uart_delivery():
     assert classify_line("MPG DRY_RUN command=$J=G91X0.1F100") == "dry-run"
     assert classify_line(
