@@ -6,7 +6,8 @@ wireless = Path("src/espnow_handler.c").read_text()
 
 # UART diagnostics aggregate metadata once per second and never serialize the
 # arbitrary command bytes that may pass through the bridge.
-assert 'event=uart_%s source=uart0 result=observed chunks=%lu bytes=%lu window_ms=%lu' in serial
+assert 'event=uart_%s source=uart0 result=%s chunks=%lu bytes=%lu window_ms=%lu' in serial
+assert 'transmit ? "accepted" : "observed"' in serial
 assert 'if (elapsed_ms < 1000) return;' in serial
 assert "log_uart_activity(true, written);" in serial
 assert "log_uart_activity(false, data->length);" in serial

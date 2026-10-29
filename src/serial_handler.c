@@ -43,8 +43,9 @@ static void log_uart_activity(bool transmit, int length)
     }
     const uint32_t elapsed_ms = (uint32_t)(now_ms - *started);
     if (elapsed_ms < 1000) return;
-    ESP_LOGI(TAG, "event=uart_%s source=uart0 result=observed chunks=%lu bytes=%lu window_ms=%lu",
-             transmit ? "tx" : "rx", (unsigned long)*chunks,
+    ESP_LOGI(TAG, "event=uart_%s source=uart0 result=%s chunks=%lu bytes=%lu window_ms=%lu",
+             transmit ? "tx" : "rx", transmit ? "accepted" : "observed",
+             (unsigned long)*chunks,
              (unsigned long)*bytes, (unsigned long)elapsed_ms);
     *chunks = 0;
     *bytes = 0;
