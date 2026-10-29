@@ -46,7 +46,8 @@ class ConsoleApp(App):
 
     def __init__(self, s3_port: str | None, c3_port: str | None,
                  s3_baud: int, c3_baud: int, enable_s3_repl: bool,
-                 log_dir: Path, *, auto_s3: bool = False, auto_c3: bool = False):
+                 log_dir: Path, *, auto_s3: bool = False, auto_c3: bool = False,
+                 record_on_start: bool = False):
         super().__init__()
         self.bus: queue.Queue = queue.Queue(maxsize=5000)
         self.readers = {
@@ -91,6 +92,7 @@ class ConsoleApp(App):
         self.log_dir = log_dir
         self.s3_repl_enabled = enable_s3_repl
         self.device_hints = {"S3": s3_port, "C3": c3_port}
+        self.record_on_start = bool(record_on_start)
 
     def _loop_summary(self, compact: bool = False) -> str:
         if self.s3_loop_status is None:
@@ -151,6 +153,10 @@ class ConsoleApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Capture from the moment readers attach so boot/reload diagnostics do
+        # not depend on an operator pressing Record after the first events.
+        if self.record_on_start:
+            self.action_toggle_record()
         for reader in self.readers.values():
             reader.start()
         repl = self.query_one("#repl", Input)
@@ -594,6 +600,8 @@ def main() -> None:
     parser.add_argument("--s3-baud", type=int, default=115200)
     parser.add_argument("--c3-baud", type=int, default=115200)
     parser.add_argument("--enable-s3-repl", action="store_true", help="Enable explicitly selected S3 REPL input; can interrupt the running app")
+    parser.add_argument("--record-on-start", action="store_true",
+                        help="Record all observed events to a timestamped JSONL session from startup")
     parser.add_argument("--log-dir", type=Path, default=Path("logs"))
     parser.add_argument("--list-devices", action="store_true")
     args = parser.parse_args()
@@ -615,7 +623,8 @@ def main() -> None:
         parser.error("S3 and C3 cannot share the same serial port")
     ConsoleApp(args.s3_port, args.c3_port, args.s3_baud, args.c3_baud,
                args.enable_s3_repl, args.log_dir, auto_s3=auto_s3,
-               auto_c3=auto_c3).run()
+               auto_c3=auto_c3,
+               record_on_start=args.record_on_start).run()
 
 
 if __name__ == "__main__":

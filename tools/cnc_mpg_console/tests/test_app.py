@@ -38,6 +38,30 @@ def test_dashboard_smoke_updates_observed_grbl_state_and_exports(tmp_path):
     asyncio.run(scenario())
 
 
+def test_record_on_start_captures_device_events_from_first_attachment(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path,
+                         record_on_start=True)
+        async with app.run_test(size=(120, 40)) as pilot:
+            assert app.recorder is not None
+            path = app.recorder.path
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=startup_context reset=physical",
+            })
+            await pilot.pause(0.12)
+            assert app.counts["S3"] == 1
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        assert any(record["source"] == "S3" and
+                   "event=startup_context" in record["message"]
+                   for record in records)
+        assert any(record["source"] == "HOST" and
+                   "recording started" in record["message"]
+                   for record in records)
+    import json
+    asyncio.run(scenario())
+
+
 def test_dashboard_correlates_observed_events_from_both_devices(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
