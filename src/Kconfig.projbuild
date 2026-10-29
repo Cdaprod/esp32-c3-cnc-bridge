@@ -16,6 +16,17 @@ menu "Wireless CNC MPG receiver"
             they are never written to the GRBL UART. When motion is explicitly
             enabled, keep this on unless physical commissioning is authorized.
 
+    config MPG_ALLOW_A_AXIS_MOTION
+        bool "Allow physical jog commands on the OEM A axis"
+        depends on MPG_ENABLE_MOTION
+        default n
+        help
+            OFF by default because the installed Doesbot GRBL firmware's A-axis
+            jog and telemetry support has not been verified. Dry-run continues
+            to format and log A-axis proposals. Enable only after the exact
+            controller firmware contract has been confirmed and separately
+            reviewed for physical commissioning.
+
     config MPG_TRUSTED_MAC
         string "Manually approved pendant Wi-Fi MAC (AA:BB:CC:DD:EE:FF)"
         default ""

@@ -99,6 +99,9 @@
 
 #define ESPNOW_RESULT_ERROR            0
 #define ESPNOW_RESULT_OK               1
+/* STOP was consumed and the MPG lease revoked, but physical UART cancel was
+ * deliberately suppressed by the receiver's disarmed/dry-run build. */
+#define ESPNOW_RESULT_SUPPRESSED       2
 
 /* --------------------------------------------------------------------------
  * GPIO FUNCTION IDENTIFIERS

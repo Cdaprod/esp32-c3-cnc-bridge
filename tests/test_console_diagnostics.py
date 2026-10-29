@@ -5,7 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 handler = (root / "src/espnow_handler.c").read_text()
 assert "event=uart_tx operation=mpg_jog" in handler
-assert "event=uart_tx operation=mpg_stop_cancel" in handler
+assert "event=mpg_stop result=sent physical_uart=0x85" in handler
 ingest_start = handler.index("static void mpg_telemetry_ingest(")
 ingest_end = handler.index("\nstatic void mpg_watchdog_task(", ingest_start)
 ingest = handler[ingest_start:ingest_end]

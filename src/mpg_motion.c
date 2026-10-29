@@ -1,4 +1,5 @@
 #include "mpg_motion.h"
+#include "espnow_protocol.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -106,6 +107,14 @@ bool mpg_motion_format_jog(char *output, size_t capacity,
     return n > 0 && (size_t)n < capacity;
 }
 
+bool mpg_motion_axis_allowed(char axis, bool physical_motion,
+                             bool allow_a_axis_motion)
+{
+    if (axis == 'X' || axis == 'Y' || axis == 'Z') return true;
+    if (axis == 'A') return !physical_motion || allow_a_axis_motion;
+    return false;
+}
+
 mpg_output_result_t mpg_motion_output_command(const char *command,
     bool dry_run, mpg_uart_writer_t uart_writer,
     mpg_dry_run_logger_t dry_run_logger, void *context)
@@ -128,4 +137,11 @@ mpg_output_result_t mpg_motion_output_cancel(bool allow_physical_output,
     if (!allow_physical_output) return MPG_OUTPUT_SUPPRESSED;
     if (!writer || writer(0x85, context) != 1) return MPG_OUTPUT_FAILED;
     return MPG_OUTPUT_SENT;
+}
+
+uint8_t mpg_motion_stop_ack_result(mpg_output_result_t result)
+{
+    if (result == MPG_OUTPUT_SENT) return ESPNOW_RESULT_OK;
+    if (result == MPG_OUTPUT_SUPPRESSED) return ESPNOW_RESULT_SUPPRESSED;
+    return ESPNOW_RESULT_ERROR;
 }

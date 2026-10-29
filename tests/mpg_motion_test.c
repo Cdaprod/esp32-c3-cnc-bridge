@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "mpg_motion.h"
+#include "espnow_protocol.h"
 
 typedef struct {
     unsigned uart_calls;
@@ -49,6 +50,11 @@ int main(void)
     assert(strcmp(cmd, "$J=G91 G21 X-0.010 F250\n") == 0);
     assert(mpg_motion_format_jog(cmd, sizeof(cmd), 'A', 10, 250));
     assert(strcmp(cmd, "$J=G91 G21 A0.010 F250\n") == 0);
+    assert(mpg_motion_axis_allowed('X', true, false));
+    assert(mpg_motion_axis_allowed('A', false, false)); /* dry-run */
+    assert(!mpg_motion_axis_allowed('A', true, false)); /* unverified */
+    assert(mpg_motion_axis_allowed('A', true, true)); /* explicit opt-in */
+    assert(!mpg_motion_axis_allowed('Q', false, true));
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'Q', 10, 250));
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'B', 10, 250));
     assert(!mpg_motion_format_jog(cmd, sizeof(cmd), 'X', 1001, 250));
@@ -128,6 +134,11 @@ int main(void)
     assert(mpg_motion_output_cancel(true, NULL, &probe) ==
            MPG_OUTPUT_FAILED);
     assert(probe.cancel_calls == 1);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_SENT) == ESPNOW_RESULT_OK);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_SUPPRESSED) ==
+           ESPNOW_RESULT_SUPPRESSED);
+    assert(mpg_motion_stop_ack_result(MPG_OUTPUT_FAILED) ==
+           ESPNOW_RESULT_ERROR);
     puts("mpg_motion tests passed");
     return 0;
 }
