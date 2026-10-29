@@ -174,6 +174,27 @@ def test_mpg_trace_matches_s3_submission_to_c3_proposal_by_session_and_sequence(
     asyncio.run(scenario())
 
 
+def test_mpg_events_without_complete_identity_remain_unmatched_without_crashing(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.bus.put_nowait({
+                "kind": "line", "source": "S3",
+                "line": "[event] event=espnow_tx packet_type=mpg_jog result=driver_accepted",
+            })
+            app.bus.put_nowait({
+                "kind": "line", "source": "C3",
+                "line": "I (104) MPG: event=dry_run result=proposed axis=X",
+            })
+            await pilot.pause(0.12)
+            assert app.mpg_s3_submissions == 1
+            assert app.mpg_c3_proposals == 1
+            assert app.mpg_matched == 0
+            assert "matched session/seq=0" in str(
+                app.query_one("#mpg-trace").render())
+    asyncio.run(scenario())
+
+
 def test_successful_dry_run_admission_does_not_increment_device_errors(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)

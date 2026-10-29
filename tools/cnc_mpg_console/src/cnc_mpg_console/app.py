@@ -562,6 +562,7 @@ class ConsoleApp(App):
     def _track_mpg_correlation(self, event: Event) -> None:
         event_type = event.fields.get("event")
         bit = 0
+        correlation_changed = False
         if (event.source == "S3" and event_type == "espnow_tx" and
                 event.fields.get("packet_type") == "mpg_jog"):
             self.mpg_s3_submissions += 1
@@ -582,7 +583,8 @@ class ConsoleApp(App):
             self._mpg_correlations[key] = new
             if old != 3 and new == 3:
                 self.mpg_matched += 1
-        if bit and old != new:
+            correlation_changed = old != new
+        if correlation_changed:
             self._mpg_trace_dirty = True
             if not self._rendering_batch:
                 self._refresh_mpg_trace()
