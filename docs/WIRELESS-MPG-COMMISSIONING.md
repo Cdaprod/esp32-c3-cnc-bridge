@@ -27,12 +27,16 @@ For a reproducible disarmed dry-run build, keep `CONFIG_MPG_ENABLE_MOTION=n`, ke
    bridge can format an `A` dry-run proposal. That does **not** establish that
    the installed controller accepts A-axis jogging: upstream GRBL 1.1 documents
    `$J=` axis words as XYZ and its parser handles X/Y/Z words only. An OEM
-   Doesbot firmware may extend this, but that capability is unverified. Keep
-   A-axis output in disarmed dry-run until the exact controller firmware or
+   Doesbot firmware may extend this, but that capability is unverified. The
+   vendor's published generic GRBL 1.1 settings page lists XYZ steps/mm, rates,
+   acceleration, and travel fields; it does not specify the fourth-axis
+   command or telemetry contract for this controller revision. Keep A-axis
+   output in disarmed dry-run until the exact installed firmware or a matching
    vendor specification confirms A support; do not infer support from the
    4-axis harness or from the C3 formatter. See the [GRBL 1.1 jog command
-   specification](https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md#jogging)
-   and [upstream G-code axis parser](https://github.com/gnea/grbl/blob/master/grbl/gcode.c).
+   specification](https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md#jogging),
+   [upstream G-code axis parser](https://github.com/gnea/grbl/blob/master/grbl/gcode.c),
+   and [Doesbot's published GRBL 1.1 settings](https://www.doesbot.com/2025/11/21/grbl-v1-1-configuration/).
 
 ## Bench verification order
 - First run CI host unit tests and full ESP-IDF build with motion disabled.
