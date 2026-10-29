@@ -86,6 +86,8 @@ class ConsoleApp(App):
             "S3": [], "C3": [], "timeline": [],
         }
         self._filter_timer = None
+        self._event_drain_timer = None
+        self._status_refresh_timer = None
         self.filter_text = ""
         self.paused = False
         self.recorder: Recorder | None = None
@@ -163,8 +165,10 @@ class ConsoleApp(App):
         if self.s3_repl_enabled:
             repl.add_class("enabled")
             repl.placeholder = "S3 REPL enabled — Enter sends Python to S3 only"
-        self.set_interval(self.EVENT_DRAIN_INTERVAL, self.drain_events)
-        self.set_interval(self.STATUS_REFRESH_INTERVAL, self.refresh_status)
+        self._event_drain_timer = self.set_interval(
+            self.EVENT_DRAIN_INTERVAL, self.drain_events)
+        self._status_refresh_timer = self.set_interval(
+            self.STATUS_REFRESH_INTERVAL, self.refresh_status)
         for role, port in self.device_hints.items():
             reader = self.readers[role]
             message = (f"Configured port: {port}" if port else
@@ -173,6 +177,15 @@ class ConsoleApp(App):
             self.query_one(f"#{role.lower()}-log", RichLog).write(message)
 
     def on_unmount(self) -> None:
+        # Prevent a timer callback from querying widgets after Textual has
+        # removed the screen tree during shutdown or a test teardown.
+        for timer in (self._event_drain_timer, self._status_refresh_timer,
+                      self._filter_timer):
+            if timer is not None:
+                timer.stop()
+        self._event_drain_timer = None
+        self._status_refresh_timer = None
+        self._filter_timer = None
         for reader in self.readers.values():
             reader.stop()
         for reader in self.readers.values():
