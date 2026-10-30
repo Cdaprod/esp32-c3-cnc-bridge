@@ -9,6 +9,7 @@ from pathlib import Path
 import queue
 import time
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Input, RichLog, Static
@@ -143,13 +144,13 @@ class ConsoleApp(App):
         with Horizontal(id="panels"):
             with Vertical(classes="panel"):
                 yield Static("ESP32-S3 PENDANT · PASSIVE", classes="panel-title")
-                yield RichLog(id="s3-log", wrap=True, markup=False, highlight=True, max_lines=2000)
+                yield RichLog(id="s3-log", wrap=True, markup=False, highlight=False, max_lines=2000)
             with Vertical(classes="panel"):
                 yield Static("ESP32-C3 BRIDGE · PASSIVE", classes="panel-title")
-                yield RichLog(id="c3-log", wrap=True, markup=False, highlight=True, max_lines=2000)
+                yield RichLog(id="c3-log", wrap=True, markup=False, highlight=False, max_lines=2000)
         yield Static("CORRELATED EVENT TIMELINE", id="timeline-title")
         yield Static("MPG observed: S3 submissions=0 | C3 dry-run proposals=0 | matched session/seq=0", id="mpg-trace")
-        yield RichLog(id="timeline", wrap=True, markup=False, highlight=True, max_lines=2000)
+        yield RichLog(id="timeline", wrap=True, markup=False, highlight=False, max_lines=2000)
         with Horizontal(id="controls"):
             yield Button("Record", id="record")
             yield Button("Pause", id="pause")
@@ -609,8 +610,49 @@ class ConsoleApp(App):
                               ("timeline", "#timeline")):
             lines = self._render_buffer[key]
             if lines:
-                self.query_one(selector, RichLog).write("\n".join(lines))
+                self.query_one(selector, RichLog).write(
+                    self._styled_log_batch(key, lines))
                 lines.clear()
+
+    @staticmethod
+    def _styled_log_batch(key: str, lines: list[str]) -> Text:
+        """Color the stable log prefix without running Rich's costly regex highlighter."""
+        category_styles = {
+            "error": "bold red",
+            "safety": "bold yellow",
+            "dry-run": "bright_magenta",
+            "motion": "bold bright_green",
+            "controller": "bright_cyan",
+            "radio": "bright_cyan",
+            "input": "bright_green",
+            "lifecycle": "bright_blue",
+        }
+        rendered = Text()
+        for index, line in enumerate(lines):
+            if index:
+                rendered.append("\n")
+            parts = line.split(" ", 2 if key == "timeline" else 1)
+            if key == "timeline" and len(parts) == 3:
+                timestamp, source, remainder = parts
+                category, separator, tail = remainder.partition(" ")
+                rendered.append(timestamp, style="dim")
+                source_style = "bright_cyan" if source == "S3" else "bright_yellow"
+                rendered.append(" " + source, style=source_style)
+                rendered.append(" " + category,
+                                style=category_styles.get(category.lower(), "bold white"))
+                if separator:
+                    rendered.append(separator + tail)
+            elif key != "timeline" and len(parts) == 2:
+                timestamp, remainder = parts
+                category, separator, tail = remainder.partition(" ")
+                rendered.append(timestamp, style="dim")
+                rendered.append(" " + category,
+                                style=category_styles.get(category.strip().lower(), "bold white"))
+                if separator:
+                    rendered.append(separator + tail)
+            else:
+                rendered.append(line)
+        return rendered
 
     def _render_many(self, events) -> None:
         was_batching = self._rendering_batch

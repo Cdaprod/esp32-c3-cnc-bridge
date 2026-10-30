@@ -12,6 +12,25 @@ def test_console_refreshes_events_and_status_at_low_latency_intervals():
     assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.05
 
 
+def test_log_widgets_use_fast_explicit_semantic_styling(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            for log in app.query(RichLog):
+                assert log.highlight is False
+            panel = app._styled_log_batch(
+                "S3", ["2026-10-30T12:00:00.000+00:00 safety  event=rejected"])
+            timeline = app._styled_log_batch(
+                "timeline", ["2026-10-30T12:00:00.000+00:00 C3 safety event=rejected"])
+            assert str(panel).endswith("safety  event=rejected")
+            assert str(timeline).endswith("C3 safety event=rejected")
+            assert any(span.style and "yellow" in str(span.style)
+                       for span in panel.spans)
+            assert any(span.style and "yellow" in str(span.style)
+                       for span in timeline.spans)
+    asyncio.run(scenario())
+
+
 def test_event_drain_yields_after_small_batch_without_dropping_queued_lines(tmp_path):
     async def scenario():
         app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
