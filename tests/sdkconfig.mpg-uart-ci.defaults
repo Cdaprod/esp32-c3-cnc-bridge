@@ -1,0 +1,8 @@
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_MPG_ENABLE_MOTION=y
+# Keep the OEM A-axis command gated in the physical UART compile path.
+# CONFIG_MPG_ALLOW_A_AXIS_MOTION is not set
+# This configuration is compiled in CI only. It must never be flashed to a CNC.
+# CONFIG_MPG_DRY_RUN is not set
+CONFIG_MPG_TRUSTED_MAC="02:00:00:00:00:01"

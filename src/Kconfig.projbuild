@@ -7,10 +7,30 @@ menu "Wireless CNC MPG receiver"
             verified GRBL UART wiring, independent E-stop, and motion tests.
             Do not enable solely because ESP-NOW pairing succeeds.
 
+    config MPG_DRY_RUN
+        bool "Enable fail-closed MPG diagnostics without jog UART transmission"
+        default y
+        help
+            This enables the receiver validation and command-formatting path
+            while MPG_ENABLE_MOTION is off. Accepted commands are logged only;
+            they are never written to the GRBL UART. When motion is explicitly
+            enabled, keep this on unless physical commissioning is authorized.
+
+    config MPG_ALLOW_A_AXIS_MOTION
+        bool "Allow physical jog commands on the OEM A axis"
+        depends on MPG_ENABLE_MOTION
+        default n
+        help
+            OFF by default because the installed Doesbot GRBL firmware's A-axis
+            jog and telemetry support has not been verified. Dry-run continues
+            to format and log A-axis proposals. Enable only after the exact
+            controller firmware contract has been confirmed and separately
+            reviewed for physical commissioning.
+
     config MPG_TRUSTED_MAC
         string "Manually approved pendant Wi-Fi MAC (AA:BB:CC:DD:EE:FF)"
         default ""
-        depends on MPG_ENABLE_MOTION
+        depends on MPG_ENABLE_MOTION || MPG_DRY_RUN
         help
             This MAC must be provisioned locally. MAC-only checks are not
             cryptographic authentication; do not use as a safety boundary.

@@ -1,7 +1,7 @@
 name: ESP-IDF C3 firmware build
 on:
   push:
-    branches: [feature/wireless-mpg-jogging]
+    branches: [feature/wireless-mpg-jogging, feature/mpg-dry-run-disarmed]
   pull_request:
 jobs:
   esp-idf-build:
@@ -16,8 +16,34 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py set-target esp32c3
           idf.py build
+          grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig
+          grep -q '^# CONFIG_MPG_ENABLE_MOTION is not set$' sdkconfig
       - name: Compile experimental motion-enabled configuration (CI only)
         shell: bash
         run: |
           . /opt/esp/idf/export.sh
           idf.py -D SDKCONFIG=sdkconfig.mpg-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-ci.defaults build
+          grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig.mpg-ci
+      - name: Compile disarmed diagnostic dry-run configuration
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-dryrun-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-dryrun.defaults build
+          grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig.mpg-dryrun-ci
+          grep -q '^# CONFIG_MPG_ENABLE_MOTION is not set$' sdkconfig.mpg-dryrun-ci
+      - name: Compile fully disabled MPG configuration
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-disabled-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-disabled.defaults build
+          grep -q '^CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y$' sdkconfig.mpg-disabled-ci
+          grep -q '^# CONFIG_MPG_ENABLE_MOTION is not set$' sdkconfig.mpg-disabled-ci
+          grep -q '^# CONFIG_MPG_DRY_RUN is not set$' sdkconfig.mpg-disabled-ci
+      - name: Compile explicitly gated UART motion path (CI only; never flash)
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -D SDKCONFIG=sdkconfig.mpg-uart-ci -D SDKCONFIG_DEFAULTS=tests/sdkconfig.mpg-uart-ci.defaults build
+          grep -q '^CONFIG_MPG_ENABLE_MOTION=y$' sdkconfig.mpg-uart-ci
+          grep -q '^# CONFIG_MPG_DRY_RUN is not set$' sdkconfig.mpg-uart-ci
+          grep -q '^# CONFIG_MPG_ALLOW_A_AXIS_MOTION is not set$' sdkconfig.mpg-uart-ci

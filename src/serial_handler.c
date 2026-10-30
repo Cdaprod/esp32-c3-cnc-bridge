@@ -5,9 +5,11 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 #include <driver/uart.h>
+#include <esp_timer.h>
 #include <esp_log.h>
 #include "serial_handler.h"
 #include "config.h"
+#include "mpg_uart_arbiter.h"
 
 void espnow_send_uart_response(const uint8_t* data, int len);
 
@@ -15,12 +17,70 @@ static const char *TAG = "SERIAL_HANDLER";
 static QueueHandle_t uart_to_tcp_queue = NULL;
 static QueueHandle_t uart_espnow_queue = NULL;
 static QueueHandle_t uart_tx_queue = NULL;
-static volatile bool uart_tx_busy = false;
+static mpg_uart_arbiter_t mpg_uart_arbiter;
+static portMUX_TYPE mpg_uart_arbiter_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t mpg_uart_rejections;
+static uint32_t mpg_uart_last_rejection_log_ms;
+static uint32_t uart_rx_chunks_window;
+static uint32_t uart_rx_bytes_window;
+static uint32_t uart_rx_window_started_ms;
+static uint32_t uart_tx_chunks_window;
+static uint32_t uart_tx_bytes_window;
+static uint32_t uart_tx_window_started_ms;
+
+static void log_uart_activity(bool transmit, int length)
+{
+    if (length <= 0) return;
+    const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t *chunks = transmit ? &uart_tx_chunks_window : &uart_rx_chunks_window;
+    uint32_t *bytes = transmit ? &uart_tx_bytes_window : &uart_rx_bytes_window;
+    uint32_t *started = transmit ? &uart_tx_window_started_ms : &uart_rx_window_started_ms;
+    (*chunks)++;
+    *bytes += (uint32_t)length;
+    if (*started == 0) {
+        *started = now_ms;
+        return;
+    }
+    const uint32_t elapsed_ms = (uint32_t)(now_ms - *started);
+    if (elapsed_ms < 1000) return;
+    ESP_LOGI(TAG, "event=uart_%s source=uart0 result=%s chunks=%lu bytes=%lu window_ms=%lu",
+             transmit ? "tx" : "rx", transmit ? "accepted" : "observed",
+             (unsigned long)*chunks,
+             (unsigned long)*bytes, (unsigned long)elapsed_ms);
+    *chunks = 0;
+    *bytes = 0;
+    *started = now_ms;
+}
 
 bool serial_uart_tx_idle(void)
 {
-    return uart_tx_queue && !uart_tx_busy &&
-           uxQueueMessagesWaiting(uart_tx_queue) == 0;
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool idle = mpg_uart_arbiter_normal_idle(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return uart_tx_queue && idle;
+}
+
+bool serial_uart_mpg_claim(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool claimed = mpg_uart_arbiter_claim_mpg(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return claimed;
+}
+
+void serial_uart_mpg_release(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    mpg_uart_arbiter_release_mpg(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+}
+
+bool serial_uart_mpg_owned(void)
+{
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool owned = mpg_uart_arbiter_mpg_owned(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    return owned;
 }
 
 
@@ -94,6 +154,7 @@ static void free_buffer(uart_data_t *buffer) {
 }
 
 void serial_init(void) {
+    memset(&mpg_uart_arbiter, 0, sizeof(mpg_uart_arbiter));
     const uart_config_t uart_config = {
         .baud_rate = UART_BAUD_RATE,
         .data_bits = UART_DATA_8_BITS,
@@ -138,11 +199,33 @@ void serial_send_data(const uint8_t *data, int length) {
         return;
     }
 
+    portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+    bool reserved = mpg_uart_arbiter_reserve_normal(&mpg_uart_arbiter);
+    portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+    if (!reserved) {
+        const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+        mpg_uart_rejections++;
+        const uint32_t rejected = mpg_uart_rejections;
+        const bool report = mpg_uart_last_rejection_log_ms == 0 ||
+            (uint32_t)(now_ms - mpg_uart_last_rejection_log_ms) >= 1000;
+        if (report) mpg_uart_last_rejection_log_ms = now_ms;
+        portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
+        if (report)
+            ESP_LOGW(TAG, "event=uart_tx_rejected reason=mpg_owns_controller "
+                     "bytes=%d total=%lu", length, (unsigned long)rejected);
+        serial_free_data(tx_data);
+        return;
+    }
+
     memcpy(tx_data->data, data, length);
     tx_data->length = length;
 
     if (xQueueSend(uart_tx_queue, &tx_data, pdMS_TO_TICKS(100)) != pdTRUE) {
         ESP_LOGW(TAG, "Coda TX UART piena: dati scartati");
+        portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+        mpg_uart_arbiter_complete_normal(&mpg_uart_arbiter);
+        portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
         serial_free_data(tx_data);
     }
 }
@@ -182,11 +265,11 @@ static void uart_tx_task(void *pvParameters) {
     while (1) {
         if (xQueueReceive(uart_tx_queue, &data, portMAX_DELAY) == pdTRUE) {
             if (data && data->data && data->length > 0) {
-                uart_tx_busy = true;
                 int written = uart_write_bytes(UART_NUM, (const char *)data->data, data->length);
                 if (written < 0 || written != data->length) {
                     ESP_LOGW(TAG, "Scrittura UART incompleta: %d/%d", written, data->length);
                 } else {
+                    log_uart_activity(true, written);
                     esp_err_t err = uart_wait_tx_done(UART_NUM, pdMS_TO_TICKS(100));
                     if (err != ESP_OK) {
                         ESP_LOGW(TAG, "Timeout/errore attesa TX UART: %s", esp_err_to_name(err));
@@ -195,7 +278,9 @@ static void uart_tx_task(void *pvParameters) {
             }
             serial_free_data(data);
             data = NULL;
-            uart_tx_busy = false;
+            portENTER_CRITICAL(&mpg_uart_arbiter_mux);
+            mpg_uart_arbiter_complete_normal(&mpg_uart_arbiter);
+            portEXIT_CRITICAL(&mpg_uart_arbiter_mux);
         }
     }
 }
@@ -218,6 +303,7 @@ static void serial_read_task(void *pvParameters) {
         uart_data_t *data = NULL;
         if (serial_get_data(&data, pdMS_TO_TICKS(10))) {
             if (data && data->data && data->length > 0) {
+                log_uart_activity(false, data->length);
                 // COPIA per ESP-NOW
                 uart_data_t *espnow_data = allocate_buffer();
                 if (espnow_data) {

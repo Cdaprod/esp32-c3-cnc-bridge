@@ -79,9 +79,14 @@
 #define ESPNOW_MSG_MPG_JOG_ACK         0x31
 #define ESPNOW_MSG_MPG_STOP            0x32
 #define ESPNOW_MSG_MPG_STOP_ACK        0x33
-/* MPG_JOG: 8 bytes [axis ASCII XYZ][deadman 0/1][signed microns LE32][feed mm/min LE16].
- * MPG_STOP: empty payload. ACK: one result byte. Receiver denies until
- * explicit operator authorization, fresh GRBL status and UART stop are wired. */
+#define ESPNOW_MSG_MPG_FEED_HOLD       0x34
+#define ESPNOW_MSG_MPG_FEED_HOLD_ACK   0x35
+/* MPG_JOG: 8 bytes [axis ASCII XYZA][deadman 0/1][signed microns LE32][feed mm/min LE16].
+ * MPG_STOP and MPG_FEED_HOLD: empty payload; each ACK is one result byte.
+ * MPG_STOP only sends realtime jog-cancel 0x85; MPG_FEED_HOLD proposes/sends
+ * GRBL feed-hold byte '!'. Both remain receiver-gated. MPG_JOG additionally
+ * requires explicit authorization and fresh GRBL status; feed hold is a
+ * trusted-session stop request and never authorizes jogging. */
 
 #define ESPNOW_MSG_ERROR               0x7F
 
@@ -99,6 +104,9 @@
 
 #define ESPNOW_RESULT_ERROR            0
 #define ESPNOW_RESULT_OK               1
+/* STOP was consumed and the MPG lease revoked, but physical UART cancel was
+ * deliberately suppressed by the receiver's disarmed/dry-run build. */
+#define ESPNOW_RESULT_SUPPRESSED       2
 
 /* --------------------------------------------------------------------------
  * GPIO FUNCTION IDENTIFIERS
