@@ -1,7 +1,7 @@
 name: ESP-IDF C3 firmware build
 on:
   push:
-    branches: [feature/wireless-mpg-jogging]
+    branches: [feature/wireless-mpg-jogging, feature/mpg-dry-run-disarmed]
   pull_request:
 jobs:
   esp-idf-build:

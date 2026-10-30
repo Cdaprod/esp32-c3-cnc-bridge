@@ -1,7 +1,7 @@
 name: MPG motion admission tests
 on:
   push:
-    branches: [main, feature/wireless-mpg-jogging]
+    branches: [main, feature/wireless-mpg-jogging, feature/mpg-dry-run-disarmed]
   pull_request:
 jobs:
   c-motion:
