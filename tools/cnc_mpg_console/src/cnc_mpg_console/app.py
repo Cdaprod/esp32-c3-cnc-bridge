@@ -23,8 +23,9 @@ from .serial_reader import SerialReader
 
 class ConsoleApp(App):
     TITLE = "CNC MPG Development Console"
-    EVENT_DRAIN_INTERVAL = 0.02
-    STATUS_REFRESH_INTERVAL = 0.1
+    EVENT_DRAIN_INTERVAL = 0.01
+    EVENT_DRAIN_MAX_EVENTS = 64
+    STATUS_REFRESH_INTERVAL = 0.05
     CSS = """
     Screen { layout: vertical; }
     #status { height: 6; padding: 0 1; }
@@ -346,7 +347,7 @@ class ConsoleApp(App):
             return
         processed = 0
         self._rendering_batch = True
-        while processed < 256:
+        while processed < self.EVENT_DRAIN_MAX_EVENTS:
             try:
                 item = self.bus.get_nowait()
             except queue.Empty:

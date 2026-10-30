@@ -21,7 +21,7 @@ Controls: `Record` starts a JSONL session, `Pause` pauses panel rendering while 
 
 For unattended acceptance captures, pass `--record-on-start`. The console then writes each observed line and connection transition to a timestamped JSONL file under `--log-dir` (default `logs/`) as soon as the serial readers attach. This option does not reset devices or send bytes; the S3 REPL remains disabled unless `--enable-s3-repl` is separately selected.
 
-The serial readers drain currently buffered bytes and use a 10 ms bounded idle read, so a short line does not wait for a large fixed read to time out. The TUI drains serial events every 20 ms and refreshes device/status indicators every 100 ms. Event rendering remains batched and bounded to 256 queued events per drain so bursts do not monopolize the UI loop.
+The serial readers drain currently buffered bytes and use a 10 ms bounded idle read, so a short line does not wait for a large fixed read to time out. The TUI drains serial events every 10 ms and refreshes device/status indicators every 50 ms. Event rendering is batched and capped at 64 queued events per drain so bursts yield back to Textual between batches instead of freezing the interface.
 
 At terminal widths below 100 columns, the status bar switches to compact labels and the timeline shortens so both device log panes remain visible. A narrow terminal still shows the same observed values; the raw event lines remain available in each device pane and the combined timeline.
 

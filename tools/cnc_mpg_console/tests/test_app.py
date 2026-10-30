@@ -7,8 +7,28 @@ from textual.widgets import RichLog
 
 
 def test_console_refreshes_events_and_status_at_low_latency_intervals():
-    assert ConsoleApp.EVENT_DRAIN_INTERVAL == 0.02
-    assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.1
+    assert ConsoleApp.EVENT_DRAIN_INTERVAL == 0.01
+    assert ConsoleApp.EVENT_DRAIN_MAX_EVENTS == 64
+    assert ConsoleApp.STATUS_REFRESH_INTERVAL == 0.05
+
+
+def test_event_drain_yields_after_small_batch_without_dropping_queued_lines(tmp_path):
+    async def scenario():
+        app = ConsoleApp(None, None, 115200, 115200, False, tmp_path)
+        async with app.run_test(size=(120, 40)):
+            for index in range(200):
+                app.bus.put_nowait({
+                    "kind": "line", "source": "S3",
+                    "line": f"[event] event=runtime sample={index}",
+                })
+            app.drain_events()
+            assert app.counts["S3"] == 64
+            assert app.bus.qsize() == 136
+            while not app.bus.empty():
+                app.drain_events()
+            assert app.counts["S3"] == 200
+            assert app.bus.empty()
+    asyncio.run(scenario())
 
 
 def test_status_panel_only_renders_when_its_observed_text_changes(tmp_path):
@@ -473,14 +493,20 @@ def test_serial_burst_renders_in_widget_batches_and_bounds_each_drain(tmp_path):
                         "line": f"event=runtime sample={index}",
                     })
                 app.drain_events()
-                assert len(app.recent) == 256
-                assert app.bus.qsize() == 44
+                assert len(app.recent) == 64
+                assert app.bus.qsize() == 236
                 assert [widget for widget, _ in writes] == ["s3-log", "timeline"]
-                assert writes[0][1].count("event=runtime") == 256
-                writes.clear()
-                app.drain_events()
+                assert writes[0][1].count("event=runtime") == 64
+                batches = 1
+                while not app.bus.empty():
+                    writes.clear()
+                    before = len(app.recent)
+                    app.drain_events()
+                    batches += 1
+                    assert len(app.recent) - before <= 64
+                    assert [widget for widget, _ in writes] == ["s3-log", "timeline"]
                 assert len(app.recent) == 300
-                assert [widget for widget, _ in writes] == ["s3-log", "timeline"]
+                assert batches == 5
     asyncio.run(scenario())
 
 
