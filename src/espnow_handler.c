@@ -179,15 +179,30 @@ static void mpg_telemetry_ingest(const uint8_t *data, int len)
             if (!mpg_line_overflow && mpg_line_len) {
                 const uint32_t line_time_ms =
                     (uint32_t)(esp_timer_get_time() / 1000);
+                char previous[sizeof(mpg_grbl.line)];
+                memcpy(previous, mpg_grbl.line, sizeof(previous));
+                previous[sizeof(previous) - 1] = '\0';
+                const bool had_status = mpg_grbl.seen;
                 const bool valid_status = mpg_grbl_status_parse(
                     &mpg_grbl, mpg_line, mpg_line_len, line_time_ms);
-                if (valid_status &&
-                    (mpg_grbl_status_log_ms == 0 ||
-                     (uint32_t)(line_time_ms - mpg_grbl_status_log_ms) >= 1000)) {
-                    memcpy(status_log, mpg_line, mpg_line_len);
-                    status_log[mpg_line_len] = '\0';
-                    status_log_pending = true;
-                    mpg_grbl_status_log_ms = line_time_ms;
+                if (valid_status) {
+                    const char *old_sep = strchr(previous, '|');
+                    const char *new_sep = strchr(mpg_grbl.line, '|');
+                    const size_t old_state_len = old_sep ?
+                        (size_t)(old_sep - previous) : 0;
+                    const size_t new_state_len = new_sep ?
+                        (size_t)(new_sep - mpg_grbl.line) : 0;
+                    const bool state_changed = !had_status ||
+                        old_state_len != new_state_len ||
+                        (new_state_len && memcmp(previous, mpg_grbl.line,
+                                                 new_state_len) != 0);
+                    if (state_changed || mpg_grbl_status_log_ms == 0 ||
+                        (uint32_t)(line_time_ms - mpg_grbl_status_log_ms) >= 1000) {
+                        memcpy(status_log, mpg_line, mpg_line_len);
+                        status_log[mpg_line_len] = '\0';
+                        status_log_pending = true;
+                        mpg_grbl_status_log_ms = line_time_ms;
+                    }
                 }
                 if (valid_status && mpg_rearm_wait_idle && mpg_grbl.idle &&
                     (uint32_t)(line_time_ms - mpg_rearm_after_ms) >= 250) {

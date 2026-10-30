@@ -18,7 +18,8 @@ assert "MPG_FEED_HOLD_ACK" in handler
 assert "physical_uart=not_sent" in source
 assert "mpg_rearm_wait_idle = true" in source
 assert "post_stop_idle_required" in handler or "post_stop_idle_required" in source
-assert "line_time_ms - mpg_rearm_after_ms) >= 250" in source
+assert any(f"{timestamp} - mpg_rearm_after_ms) >= 250" in source
+           for timestamp in ("line_time_ms", "now_ms"))
 
 physical = handler.index("#if MPG_ENABLE_MOTION && !MPG_DRY_RUN")
 dry_run = handler.index("#elif MPG_DRY_RUN", physical)

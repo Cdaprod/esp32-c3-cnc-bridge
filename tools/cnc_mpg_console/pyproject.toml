@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cnc-mpg-console"
+version = "0.1.0"
+description = "Read-only S3/C3 serial diagnostics dashboard for the CNC MPG pendant ecosystem"
+requires-python = ">=3.10"
+dependencies = ["pyserial>=3.5", "textual>=0.58,<2"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+cnc-mpg-console = "cnc_mpg_console.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
