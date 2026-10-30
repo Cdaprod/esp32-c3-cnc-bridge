@@ -13,6 +13,7 @@
 
 /* Radio / bridge timing configuration */
 #define ESPNOW_CHANNEL          1
+#define ESPNOW_PEER_CHANNEL_CURRENT_WIFI 0
 #define ESPNOW_WAIT_TIME_MS     200
 #define ESPNOW_MAX_RETRY        3
 
