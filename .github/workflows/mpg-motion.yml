@@ -28,3 +28,4 @@ jobs:
           python3 tests/test_grbl_ack_wiring.py
           python3 tests/test_uart_console_separation.py
           python3 tests/test_mpg_pair_sequence_baseline.py
+          python3 tests/test_pair_ack_contract.py
