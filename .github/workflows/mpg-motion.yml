@@ -19,3 +19,4 @@ jobs:
           python3 tests/test_uart_command_gate.py
           python3 tests/test_mpg_stop_gate.py
           python3 tests/test_espnow_channel_policy.py
+          python3 tests/test_pair_ack_contract.py
