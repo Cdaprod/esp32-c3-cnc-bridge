@@ -7,6 +7,15 @@ menu "Wireless CNC MPG receiver"
             verified GRBL UART wiring, independent E-stop, and motion tests.
             Do not enable solely because ESP-NOW pairing succeeds.
 
+    config MPG_DRY_RUN
+        bool "Log admitted jog commands without UART transmission"
+        default y
+        depends on MPG_ENABLE_MOTION
+        help
+            Keep this enabled for diagnostics. Admitted jog commands are
+            formatted and logged but are never sent to the GRBL UART. Disable
+            only for an explicitly authorized physical commissioning build.
+
     config MPG_TRUSTED_MAC
         string "Manually approved pendant Wi-Fi MAC (AA:BB:CC:DD:EE:FF)"
         default ""
